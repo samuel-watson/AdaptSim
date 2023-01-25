@@ -138,7 +138,7 @@ adapt <- R6::R6Class("adapt",
 
                          self$last_stan_fit = fit
                          ypred <- fit$draws("y_grid_predict",format = "matrix")
-
+                         sige <- fit$draws("sigma_e",format = "matrix")
                          dfp <- cbind(as.data.frame(xs),data.frame(mean = colMeans(ypred)))
                          dfp$lci <- apply(ypred,2,function(i)quantile(i,0.025))
                          dfp$uci <- apply(ypred,2,function(i)quantile(i,0.975))
@@ -146,28 +146,50 @@ adapt <- R6::R6Class("adapt",
                          dfp$prob <- NA
                          dfp$entr <- NA
 
+                         ## average correlation kappa estimates commented out below.
+                         ## see code below that for updated mean CrI width approach
+
                          lambda <- fit$draws("phi",format = "matrix")
                          lambda <- colMeans(lambda)
                          self$lambda <- lambda
-                         if(kappa == 1){
-                           k <- private$kappa_1(alpha,lambda)
-                           self$kappa <- k
-                           for(i in 1:nrow(dfp)){
-                             dfp$prob[i] <- sum(abs(ypred[,i]-alpha) < k)/nrow(ypred)
-                             dfp$entr[i] <- -dfp$prob[i]*log(dfp$prob[i],2) - (1-dfp$prob[i])*log((1-dfp$prob[i]),2)
-                             if(dfp$prob[i]==0 || dfp$prob[i]==1)dfp$entr[i] <- 0
-                           }
-                         } else if(kappa== 2){
-                           k <- rep(NA,nrow(dfp))
-                           for(i in 1:nrow(dfp)){
-                             k[i] <- private$kappa_2(theta = unlist(unname(dfp[i,1:ncol(self$par_vals)])),alpha,lambda)
 
-                             dfp$prob[i] <- sum(abs(ypred[,i]-alpha) < k[i])/nrow(ypred)
+                         # if(kappa == 1){
+                         #   k <- private$kappa_1(alpha,lambda)
+                         #   self$kappa <- k
+                         #   for(i in 1:nrow(dfp)){
+                         #     dfp$prob[i] <- sum(abs(ypred[,i]-alpha) < k)/nrow(ypred)
+                         #     dfp$entr[i] <- -dfp$prob[i]*log(dfp$prob[i],2) - (1-dfp$prob[i])*log((1-dfp$prob[i]),2)
+                         #     if(dfp$prob[i]==0 || dfp$prob[i]==1)dfp$entr[i] <- 0
+                         #   }
+                         # } else if(kappa== 2){
+                         #   k <- rep(NA,nrow(dfp))
+                         #   for(i in 1:nrow(dfp)){
+                         #     k[i] <- private$kappa_2(theta = unlist(unname(dfp[i,1:ncol(self$par_vals)])),alpha,lambda)
+                         #
+                         #     dfp$prob[i] <- sum(abs(ypred[,i]-alpha) < k[i])/nrow(ypred)
+                         #     dfp$entr[i] <- -dfp$prob[i]*log(dfp$prob[i],2) - (1-dfp$prob[i])*log((1-dfp$prob[i]),2)
+                         #     if(dfp$prob[i]==0 || dfp$prob[i]==1)dfp$entr[i] <- 0
+                         #   }
+                         #   self$kappa <- cbind(dfp[,1:ncol(self$par_vals)],k=k)
+                         # }
+
+                         if(kappa==1){
+                           self$kappa <- mean(abs(dfp$uci - dfp$lci)/2)
+                           for(i in 1:nrow(dfp)){
+                                 dfp$prob[i] <- sum(abs(ypred[,i]-alpha) < self$kappa)/nrow(ypred)
+                                 dfp$entr[i] <- -dfp$prob[i]*log(dfp$prob[i],2) - (1-dfp$prob[i])*log((1-dfp$prob[i]),2)
+                                 if(dfp$prob[i]==0 || dfp$prob[i]==1)dfp$entr[i] <- 0
+                               }
+                         } else if(kappa == 2) {
+                           self$kappa <- abs(dfp$uci - dfp$lci)/2
+                           for(i in 1:nrow(dfp)){
+                             dfp$prob[i] <- sum(abs(ypred[,i]-alpha) < self$kappa[i])/nrow(ypred)
                              dfp$entr[i] <- -dfp$prob[i]*log(dfp$prob[i],2) - (1-dfp$prob[i])*log((1-dfp$prob[i]),2)
                              if(dfp$prob[i]==0 || dfp$prob[i]==1)dfp$entr[i] <- 0
                            }
-                           self$kappa <- cbind(dfp[,1:ncol(self$par_vals)],k=k)
                          }
+
+
                          # get posterior values
                          beta <- fit$draws("beta",format = "matrix")
                          private$priors_m <- colMeans(beta)
@@ -211,7 +233,7 @@ adapt <- R6::R6Class("adapt",
                        all_vals = NULL,
                        mod_lin = NULL,
                        mod_bin = NULL,
-                       kappa_1 = function(alpha, lambda){
+                       kappa_1 = function(alpha, lambda, sigma_e = NULL){
                          N <- nrow(private$all_vals)
                          rho <- rep(NA,length(self$par_upper))
                          for(i in 1:length(self$par_upper)){
@@ -219,9 +241,13 @@ adapt <- R6::R6Class("adapt",
                              lambda[i]^2/6 * (1- exp(-lambda[i]^2/self$par_upper[i]^2))
                          }
                          n <- 1 + (N - 1)*prod(rho)
-                         return(1.96 * sqrt(alpha*(1-alpha)/n))
+                         if(is.null(sigma_e)){
+                           return(1.96 * sqrt(alpha*(1-alpha)/n))
+                         } else {
+                           ## add return for linear model...
+                         }
                        },
-                       kappa_2 = function(theta, alpha, lambda){
+                       kappa_2 = function(theta, alpha, lambda, sigma_e = NULL){
                          N <- nrow(private$all_vals)
                          b <- self$par_upper - self$par_lower
                          rho <- rep(NA,length(b))

@@ -80,8 +80,6 @@ model{
   sigma ~ normal(0,0.5);
 
   target += reduce_sum(partial_sum_lpmf,y,grainsize,f[1:Nsample]);
-
-  //y ~ bernoulli_logit(f);
 }
 
 generated quantities{

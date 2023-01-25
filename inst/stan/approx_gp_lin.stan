@@ -31,7 +31,7 @@ functions {
     }
     return fi1;
   }
-  real partial_sum_lpmf(array[] int y,int start, int end, vector mu,real sigma){
+  real partial_sum_lpdf(array[] real y,int start, int end, vector mu,real sigma){
     return normal_lpdf(y[start:end]|mu[start:end], sigma);
   }
 }
@@ -42,7 +42,7 @@ data {
   int<lower=1> M_nD; //total basis functions m1*m2*...*mD
   int<lower=1> Nsample; //number of observations per time period
   int<lower=1> Npred;
-  array[Nsample] int y;
+  array[Nsample] real y;
   matrix[Nsample+Npred,D] x_grid; //prediction grid and observations
   array[M_nD,D] int indices;
 }
@@ -81,13 +81,13 @@ model{
   sigma ~ normal(0,0.5);
   sigma_e ~ normal(0,1);
 
-  target += reduce_sum(partial_sum_lpmf,y,grainsize,f[1:Nsample],sigma_e);
+  target += reduce_sum(partial_sum_lpdf,y,grainsize,f[1:Nsample],sigma_e);
 }
 
 generated quantities{
   vector[Npred] y_grid_predict;
 
   for(i in (Nsample+1):(Nsample+Npred)){
-    y_grid_predict[i-Nsample] = inv_logit(f[i]);
+    y_grid_predict[i-Nsample] = f[i];
   }
 }
