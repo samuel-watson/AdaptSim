@@ -36,8 +36,7 @@ adapt <- R6::R6Class("adapt",
                                              par_lower,
                                              par_upper,
                                              n,
-                                             m,
-                                             path_to_stan_files){
+                                             m){
                          self$par_lower = par_lower
                          self$par_upper = par_upper
                          self$data_fn = get(data_fn)
@@ -50,8 +49,8 @@ adapt <- R6::R6Class("adapt",
                            }
                          }
                          private$ind <- as.matrix(do.call(expand.grid,args))
-                         private$priors_m = rep(0,nrow(ind))
-                         private$priors_sd = rep(1,nrow(ind))
+                         private$priors_m = rep(0,nrow(private$ind))
+                         private$priors_sd = rep(1,nrow(private$ind))
                          self$par_vals <- matrix(0,nrow=n,ncol=length(par_upper))
                          # simulate starting values
                          for(i in 1:length(par_upper)){
@@ -90,15 +89,15 @@ adapt <- R6::R6Class("adapt",
                            self$last_sim_output <- self$last_sim_output[,-idxna]
                          }
 
-                         q1 <- par_upper[1] - par_lower[1]
-                         l1 <- par_lower[1] + q1/(2*samp_n)
-                         u1 <- par_upper[1] - q1/(2*samp_n)
+                         q1 <- self$par_upper[1] - self$par_lower[1]
+                         l1 <- self$par_lower[1] + q1/(2*samp_n)
+                         u1 <- self$par_upper[1] - q1/(2*samp_n)
                          xs <- matrix(seq(l1,u1,length.out=samp_n),ncol=1)
-                         if(length(par_upper)>1){
-                           for(i in 2:length(par_upper)){
-                             q1 <- par_upper[i] - par_lower[i]
-                             l1 <- par_lower[i] + q1/(2*samp_n)
-                             u1 <- par_upper[i] - q1/(2*samp_n)
+                         if(length(self$par_upper)>1){
+                           for(i in 2:length(self$par_upper)){
+                             q1 <- self$par_upper[i] - self$par_lower[i]
+                             l1 <- self$par_lower[i] + q1/(2*samp_n)
+                             u1 <- self$par_upper[i] - q1/(2*samp_n)
                              xs <- expand.grid(xs, matrix(seq(l1,u1,length.out=samp_n),ncol=1))
                            }
                          }
@@ -180,8 +179,8 @@ adapt <- R6::R6Class("adapt",
                          d1 <- diff(dfp$Var1)[diff(dfp$Var1)>0][1]
                          dfs <- matrix(dfp$Var1[newsamp]+runif(length(newsamp),0,d1))
 
-                         if(length(par_upper)>1){
-                           for(i in 2:length(par_upper)){
+                         if(length(self$par_upper)>1){
+                           for(i in 2:length(self$par_upper)){
                              d1 <- diff(dfp[,paste0("Var",i)])[diff(dfp[,paste0("Var",i)])>0][1]
                              dfs <- cbind(dfs,matrix(dfp[,paste0("Var",i)][newsamp]+runif(length(newsamp),0,d1)))
                            }
@@ -231,11 +230,11 @@ adapt <- R6::R6Class("adapt",
                            if(theta[i] == self$par_lower[i] || theta[i] == self$par_upper[i]){
                              rho[i] <- l * pracma::erf(b[i]/lambda[i])
                            } else if(theta[i] < (self$par_lower[i]+self$par_upper[i])/2){
-                             rho[i] <- l * (pracma::erf((theta[i]-par_lower[i])/lambda[i]) + pracma::erf((par_upper[i] - theta[i])/lambda[i]))
+                             rho[i] <- l * (pracma::erf((theta[i]-self$par_lower[i])/lambda[i]) + pracma::erf((self$par_upper[i] - theta[i])/lambda[i]))
                            } else if(theta[i] == (self$par_lower[i]+self$par_upper[i])/2){
                              rho[i] <- 2*l * pracma::erf(b[i]/2*lambda[i])
                            } else if(theta[i] > (self$par_lower[i]+self$par_upper[i])/2){
-                             rho[i] <- l * (pracma::erf((par_upper[i] - theta[i])/lambda[i]) + pracma::erf((theta[i]-par_lower[i])/lambda[i]))
+                             rho[i] <- l * (pracma::erf((self$par_upper[i] - theta[i])/lambda[i]) + pracma::erf((theta[i]-self$par_lower[i])/lambda[i]))
                            }
                          }
                          n <- 1 + (N - 1)*prod(rho)

@@ -10,7 +10,8 @@ Authors@R: c(person("Sam", "Watson", email = "S.I.Watson@bham.ac.uk",
 Description: Adaptive simulation.
 License: GPL (>= 2)
 Imports: 
-    methods
+    methods,
+    pbapply
 RoxygenNote: 7.2.1
 NeedsCompilation: yes
 Author: Sam Watson [aut, cre],
