@@ -58,8 +58,11 @@ adapt <- R6::R6Class("adapt",
                          }
                          private$all_vals = self$par_vals
                          message("Stan files will be compiled if this is the first time executing this class.")
-                         private$mod_bin = cmdstanr::cmdstan_model("./inst/stan/approx_gp.stan")
-                         private$mod_lin = cmdstanr::cmdstan_model("./inst/stan/approx_gp_lin.stan")
+                         bin_file <- system.file("stan","approx_gp.stan",package = "AdaptSim",mustWork = TRUE)
+                         lin_file <- system.file("stan","approx_gp.stan",package = "AdaptSim",mustWork = TRUE)
+
+                         private$mod_bin = cmdstanr::cmdstan_model(bin_file)
+                         private$mod_lin = cmdstanr::cmdstan_model(lin_file)
                        },
                        # model fitting simulation
                        sim = function(cl = NULL){

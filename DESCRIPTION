@@ -1,8 +1,8 @@
 Package: AdaptSim
 Type: Package
 Title: Adaptive Simulation
-Version: 0.2.1
-Date: 2022-11-03
+Version: 0.2.2
+Date: 2023-01-26
 Authors@R: c(person("Sam", "Watson", email = "S.I.Watson@bham.ac.uk",
                   role = c("aut", "cre")),
              person("Yixin", "Wang", email = "y.wang18@bham.ac.uk",
