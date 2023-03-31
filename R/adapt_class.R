@@ -36,7 +36,8 @@ adapt <- R6::R6Class("adapt",
                                              par_lower,
                                              par_upper,
                                              n,
-                                             m){
+                                             m,
+                                             par_discrete = rep(FALSE,length(par_upper))){
                          self$par_lower = par_lower
                          self$par_upper = par_upper
                          self$data_fn = get(data_fn)
@@ -55,6 +56,7 @@ adapt <- R6::R6Class("adapt",
                          # simulate starting values
                          for(i in 1:length(par_upper)){
                            self$par_vals[,i] <- runif(n,par_lower[i],par_upper[i])
+                           if(par_discrete[i])self$par_vals[,i] <- round(self$par_vals[,i],0)
                          }
                          private$all_vals = self$par_vals
                          message("Stan files will be compiled if this is the first time executing this class.")
@@ -209,6 +211,10 @@ adapt <- R6::R6Class("adapt",
                              d1 <- diff(dfp[,paste0("Var",i)])[diff(dfp[,paste0("Var",i)])>0][1]
                              dfs <- cbind(dfs,matrix(dfp[,paste0("Var",i)][newsamp]+runif(length(newsamp),0,d1)))
                            }
+                         }
+
+                         for(i in 1:length(self$par_upper)){
+                           if(par_discrete[i])dfs[,i] <- round(dfs[,i],0)
                          }
 
                          if(append){
