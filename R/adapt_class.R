@@ -143,7 +143,8 @@ adapt <- R6::R6Class("adapt",
                                                          iter_warmup = 500,
                                                          iter_sampling = 500,
                                                          refresh = 100)
-                         } stop("Model incorrectly specified")
+                         } else {
+                           stop("Model incorrectly specified")
                          }
 
                          self$last_stan_fit = fit
