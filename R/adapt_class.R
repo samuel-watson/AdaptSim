@@ -38,6 +38,8 @@ adapt <- R6::R6Class("adapt",
                                              n,
                                              m,
                                              par_discrete = rep(FALSE,length(par_upper))){
+                         ## add checks of the functions here
+
                          self$par_lower = par_lower
                          self$par_upper = par_upper
                          self$data_fn = get(data_fn)
@@ -128,17 +130,20 @@ adapt <- R6::R6Class("adapt",
                          )
 
                          if(model == "binomial"){
+                           message("Using binomial model")
                            fit <- private$mod_bin$sample(data = data,
                                                          chains = 1,
                                                          iter_warmup = 500,
                                                          iter_sampling = 500,
                                                          refresh = 100)
-                         } else {
+                         } else if(model == "linear"){
+                           message("Using linear model")
                            fit <- private$mod_lin$sample(data = data,
                                                          chains = 1,
                                                          iter_warmup = 500,
                                                          iter_sampling = 500,
                                                          refresh = 100)
+                         } stop("Model incorrectly specified")
                          }
 
                          self$last_stan_fit = fit

@@ -57,7 +57,7 @@ transformed data {
 parameters {
   vector[M_nD] beta;
   row_vector<lower=1e-05>[D] phi; //length scale
-  real<lower=1e-05> sigma;
+  real<lower=1e-05> sigma_e;
 }
 
 transformed parameters{
@@ -66,7 +66,7 @@ transformed parameters{
   vector[M_nD] SPD_beta;
 
   for(m in 1:M_nD){
-    diagSPD[m] =  sqrt(spd_nD(sigma, phi, sqrt(lambda_nD(L, indices[m,], D)), D));
+    diagSPD[m] =  sqrt(spd_nD(sigma_e, phi, sqrt(lambda_nD(L, indices[m,], D)), D));
   }
 
   SPD_beta = diagSPD .* beta;
@@ -77,7 +77,7 @@ model{
   int grainsize = 1;
   to_vector(beta) ~ normal(0,1);
   phi ~ normal(0,0.5);
-  sigma ~ normal(0,0.5);
+  sigma_e ~ normal(0,0.5);
 
   target += reduce_sum(partial_sum_lpmf,y,grainsize,f[1:Nsample]);
 }
