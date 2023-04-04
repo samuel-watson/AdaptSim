@@ -14,6 +14,8 @@ adapt <- R6::R6Class("adapt",
                        par_lower = NULL,
                        # upper bounds
                        par_upper = NULL,
+                       # whether the parameter is discrete
+                       par_discrete = NULL,
                        # basis functions per dimension
                        m = NULL,
                        # simulation values of parameters
@@ -42,6 +44,7 @@ adapt <- R6::R6Class("adapt",
 
                          self$par_lower = par_lower
                          self$par_upper = par_upper
+                         self$par_discrete = par_discrete
                          self$data_fn = get(data_fn)
                          self$fit_fn = get(fit_fn)
                          self$m = m
@@ -58,7 +61,7 @@ adapt <- R6::R6Class("adapt",
                          # simulate starting values
                          for(i in 1:length(par_upper)){
                            self$par_vals[,i] <- runif(n,par_lower[i],par_upper[i])
-                           if(par_discrete[i])self$par_vals[,i] <- round(self$par_vals[,i],0)
+                           if(self$par_discrete[i])self$par_vals[,i] <- round(self$par_vals[,i],0)
                          }
                          private$all_vals = self$par_vals
                          message("Stan files will be compiled if this is the first time executing this class.")
@@ -220,7 +223,7 @@ adapt <- R6::R6Class("adapt",
                          }
 
                          for(i in 1:length(self$par_upper)){
-                           if(par_discrete[i])dfs[,i] <- round(dfs[,i],0)
+                           if(self$par_discrete[i])dfs[,i] <- round(dfs[,i],0)
                          }
 
                          if(append){
