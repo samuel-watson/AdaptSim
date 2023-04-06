@@ -45,6 +45,11 @@ data {
   array[Nsample] real y;
   matrix[Nsample+Npred,D] x_grid; //prediction grid and observations
   array[M_nD,D] int indices;
+  array[2] real intercept_prior;
+  array[M_nD,2] real beta_prior;
+  array[D,2] real lengthscale_prior;
+  array[2] real fscale_prior;
+  array[2] real sigma_prior;
 }
 transformed data {
   matrix[Nsample+Npred,M_nD] PHI;
@@ -59,6 +64,7 @@ parameters {
   row_vector<lower=1e-05>[D] phi; //length scale
   real<lower=1e-05> sigma;
   real<lower=0> sigma_e;
+  real intercept;
 }
 
 transformed parameters{
@@ -67,27 +73,28 @@ transformed parameters{
   vector[M_nD] SPD_beta;
 
   for(m in 1:M_nD){
-    diagSPD[m] =  sqrt(spd_nD(sigma, phi, sqrt(lambda_nD(L, indices[m,], D)), D));
+    diagSPD[m] =  sqrt(spd_nD(sigma_e, phi, sqrt(lambda_nD(L, indices[m,], D)), D));
   }
 
   SPD_beta = diagSPD .* beta;
-  f = PHI * SPD_beta;
+  f = intercept + PHI * SPD_beta;
 
 }
 model{
   int grainsize = 1;
-  to_vector(beta) ~ normal(0,1);
-  phi ~ normal(0,0.5);
-  sigma ~ normal(0,0.5);
-  sigma_e ~ normal(0,1);
+  for(i in 1:M_nD)beta[i] ~ normal(beta_prior[i,1],beta_prior[i,2]);
+  for(d in 1:D)phi[d] ~ normal(lengthscale_prior[d,1],lengthscale_prior[d,2]);
+  sigma_e ~ normal(fscale_prior[1],fscale_prior[2]);
+  intercept ~ normal(intercept_prior[1],intercept_prior[2]);
+  sigma ~ normal(sigma_prior[1],sigma_prior[2]);
 
-  target += reduce_sum(partial_sum_lpdf,y,grainsize,f[1:Nsample],sigma_e);
+  target += reduce_sum(partial_sum_lpdf,y,grainsize,f[1:Nsample],sigma);
 }
 
 generated quantities{
   vector[Npred] y_grid_predict;
 
   for(i in (Nsample+1):(Nsample+Npred)){
-    y_grid_predict[i-Nsample] = f[i];
+    y_grid_predict[i-Nsample] = intercept + f[i];
   }
 }

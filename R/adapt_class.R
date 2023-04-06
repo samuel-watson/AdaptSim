@@ -57,6 +57,10 @@ adapt <- R6::R6Class("adapt",
                          private$ind <- as.matrix(do.call(expand.grid,args))
                          private$priors_m = rep(0,nrow(private$ind))
                          private$priors_sd = rep(1,nrow(private$ind))
+                         private$prior_intercept = c(0,1)
+                         private$prior_lengthscale = as.matrix(cbind(rep(0,length(par_upper)),rep(0.5,length(par_upper))))
+                         private$prior_fscale = c(0,0.5)
+                         private$prior_varpar = c(0,1)
                          self$par_vals <- matrix(0,nrow=n,ncol=length(par_upper))
                          # simulate starting values
                          for(i in 1:length(par_upper)){
@@ -65,8 +69,8 @@ adapt <- R6::R6Class("adapt",
                          }
                          private$all_vals = self$par_vals
                          message("Stan files will be compiled if this is the first time executing this class.")
-                         bin_file <- system.file("stan","approx_gp.stan",package = "AdaptSim",mustWork = TRUE)
-                         lin_file <- system.file("stan","approx_gp.stan",package = "AdaptSim",mustWork = TRUE)
+                         bin_file <- system.file("stan","approx_gp_binom.stan",package = "AdaptSim",mustWork = TRUE)
+                         lin_file <- system.file("stan","approx_gp_lin.stan",package = "AdaptSim",mustWork = TRUE)
 
                          private$mod_bin = cmdstanr::cmdstan_model(bin_file)
                          private$mod_lin = cmdstanr::cmdstan_model(lin_file)
@@ -91,7 +95,11 @@ adapt <- R6::R6Class("adapt",
                                         samp_n = 20,
                                         n_new = 100,
                                         L = 1.2,
-                                        append = FALSE){
+                                        append = FALSE,
+                                        chains = 3,
+                                        parallel_chains = 6,
+                                        warmup = 500,
+                                        sampling = 500){
 
                          if(any(is.na(self$last_sim_output[2,]) | is.na(self$last_sim_output[stat,]))){
                            idxna <- which((is.na(self$last_sim_output[2,]) | is.na(self$last_sim_output[stat,])))
@@ -99,52 +107,79 @@ adapt <- R6::R6Class("adapt",
                            self$last_sim_output <- self$last_sim_output[,-idxna]
                          }
 
-                         q1 <- self$par_upper[1] - self$par_lower[1]
-                         l1 <- self$par_lower[1] + q1/(2*samp_n)
-                         u1 <- self$par_upper[1] - q1/(2*samp_n)
-                         xs <- matrix(seq(l1,u1,length.out=samp_n),ncol=1)
-                         if(length(self$par_upper)>1){
-                           for(i in 2:length(self$par_upper)){
-                             q1 <- self$par_upper[i] - self$par_lower[i]
-                             l1 <- self$par_lower[i] + q1/(2*samp_n)
-                             u1 <- self$par_upper[i] - q1/(2*samp_n)
-                             xs <- expand.grid(xs, matrix(seq(l1,u1,length.out=samp_n),ncol=1))
+                         if(is(samp_n,"data.frame")){
+                           if(ncol(samp_n)!=length(self$par_upper))stop("Wrong number of columns")
+                           for(i in 1:length(self$par_upper)){
+                             if(any(samp_n[,i]>self$par_upper[i])|any(samp_n[,i]<self$par_lower[i]))warning("Prediction values out of range")
                            }
+                           xs <- samp_n
+                           colnames(xs) <- paste0("Var",1:ncol(xs))
+                           x <- rbind(self$par_vals,as.matrix(xs))
+                         } else if(is(samp_n,"double")){
+                           q1 <- self$par_upper[1] - self$par_lower[1]
+                           l1 <- self$par_lower[1] + q1/(2*samp_n)
+                           u1 <- self$par_upper[1] - q1/(2*samp_n)
+                           xs <- matrix(seq(l1,u1,length.out=samp_n),ncol=1)
+                           if(length(self$par_upper)>1){
+                             for(i in 2:length(self$par_upper)){
+                               q1 <- self$par_upper[i] - self$par_lower[i]
+                               l1 <- self$par_lower[i] + q1/(2*samp_n)
+                               u1 <- self$par_upper[i] - q1/(2*samp_n)
+                               xs <- expand.grid(xs, matrix(seq(l1,u1,length.out=samp_n),ncol=1))
+                             }
+                           }
+                           x <- rbind(self$par_vals,as.matrix(xs))
+
+                         } else {
+                           stop("samp_n wrong type")
                          }
-                         x <- rbind(self$par_vals,as.matrix(xs))
+                         nsamp <- nrow(xs)
 
                          x_grid <- x
                          for(i in 1:ncol(x_grid)){
                            x_grid[,i] <- 2*(x_grid[,i]-min(x_grid[,i]))/(max(x_grid[,i])-min(x_grid[,i])) - 1
                          }
 
-                         data <- list(
+                         dat <- list(
                            D = ncol(self$par_vals),
                            L = rep(L,length(self$par_upper)),
                            M = self$m,
                            M_nD = nrow(private$ind),
                            Nsample = nrow(self$par_vals),
-                           Npred = nrow(xs),
+                           Npred = nsamp,
                            y = self$last_sim_output[stat,],
                            x_grid = x_grid,
                            indices = private$ind,
-                           b_mean = private$priors_m,
-                           b_sd = private$priors_sd
+                           intercept_prior = private$prior_intercept,
+                           beta_prior = cbind(private$priors_m,private$priors_sd),
+                           lengthscale_prior = private$prior_lengthscale,
+                           fscale_prior = private$prior_fscale
                          )
+
+                         if(private$prior_intercept[1] == 0) {
+                          if(model == "binomial"){
+                            dat$intercept_prior[1] <- log(alpha/(1-alpha))
+                          } else if(model == "linear"){
+                            dat$intercept_prior[1] <- alpha
+                          }
+                         }
 
                          if(model == "binomial"){
                            message("Using binomial model")
-                           fit <- private$mod_bin$sample(data = data,
-                                                         chains = 1,
-                                                         iter_warmup = 500,
-                                                         iter_sampling = 500,
+                           fit <- private$mod_bin$sample(data = dat,
+                                                         chains = chains,
+                                                         parallel_chains = parallel_chains,
+                                                         iter_warmup = warmup,
+                                                         iter_sampling = sampling,
                                                          refresh = 100)
                          } else if(model == "linear"){
                            message("Using linear model")
-                           fit <- private$mod_lin$sample(data = data,
-                                                         chains = 1,
-                                                         iter_warmup = 500,
-                                                         iter_sampling = 500,
+                           dat$
+                           fit <- private$mod_lin$sample(data = dat,
+                                                         chains = chains,
+                                                         parallel_chains = parallel_chains,
+                                                         iter_warmup = warmup,
+                                                         iter_sampling = sampling,
                                                          refresh = 100)
                          } else {
                            stop("Model incorrectly specified")
@@ -208,6 +243,19 @@ adapt <- R6::R6Class("adapt",
                          beta <- fit$draws("beta",format = "matrix")
                          private$priors_m <- colMeans(beta)
                          private$priors_sd <- apply(beta,2,sd)
+                         intercept <- fit$draws("intercept",format = "matrix")
+                         private$prior_intercept <- c(mean(intercept),sd(intercept))
+                         phi <- fit$draws("phi",format = "matrix")
+                         for(i in 1:length(self$par_upper)){
+                           private$prior_lengthscale[,1] <- colMeans(phi)
+                           private$prior_lengthscale[,2] <- apply(phi,2,sd)
+                         }
+                         sigmae <- fit$draws("sigma_e",format = "matrix")
+                         private$prior_fscale <- c(mean(sigmae),sd(sigmae))
+                         if(model%in%c("linear","beta")){
+                           sigma <- fit$draws("sigma",format = "matrix")
+                           private$prior_varpar <- c(mean(sigma),sd(sigma))
+                         }
 
                          ## draw a new sample of parameters
                          newsamp <- sample(1:nrow(dfp),n_new,replace = TRUE,prob = dfp$entr)
@@ -242,11 +290,16 @@ adapt <- R6::R6Class("adapt",
                          dfp <- as.data.frame(private$ind)
                          dfp$mean <- private$priors_m
                          dfp$sd <- private$priors_sd
+                         return(list(beta = dfp, intercept = private$prior_intercept))
                        }
                      ),
                      private = list(
                        priors_m = NULL,
                        priors_sd = NULL,
+                       prior_intercept = NULL,
+                       prior_lengthscale = NULL,
+                       prior_fscale = NULL,
+                       prior_varpar = NULL,
                        ind = NULL,
                        all_vals = NULL,
                        mod_lin = NULL,
