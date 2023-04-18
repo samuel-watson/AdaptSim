@@ -137,7 +137,7 @@ adapt <- R6::R6Class("adapt",
 
                          x_grid <- x
                          for(i in 1:ncol(x_grid)){
-                           x_grid[,i] <- 2*(x_grid[,i]-min(x_grid[,i]))/(max(x_grid[,i])-min(x_grid[,i])) - 1
+                           x_grid[,i] <- 2*(x_grid[,i]-self$par_lower[i])/(self$par_upper[i]-self$par_lower[i]) - 1
                          }
 
                          dat <- list(
