@@ -38,7 +38,6 @@ functions {
 data {
   int<lower=1> D; //number of dimensions
   array[D] real L;
-  int<lower=1> M; // number of basis functions (per dimension)
   int<lower=1> M_nD; //total basis functions m1*m2*...*mD
   int<lower=1> Nsample; //number of observations per time period
   int<lower=1> Npred;

@@ -48,12 +48,23 @@ adapt <- R6::R6Class("adapt",
                          self$data_fn = get(data_fn)
                          self$fit_fn = get(fit_fn)
                          self$m = m
-                         args <- list(1:m)
-                         if(length(par_upper)>1){
-                           for(i in 2:length(par_upper)){
-                             args[[i]] <- 1:m
+                         if(length(m)==1){
+                           args <- list(1:m)
+                           if(length(par_upper)>1){
+                             for(i in 2:length(par_upper)){
+                               args[[i]] <- 1:m
+                             }
+                           }
+                         } else {
+                           if(length(m)!=length(par_upper))stop("m wrong length")
+                           args <- list(1:m[1])
+                           if(length(par_upper)>1){
+                             for(i in 2:length(par_upper)){
+                               args[[i]] <- 1:m[i]
+                             }
                            }
                          }
+
                          private$ind <- as.matrix(do.call(expand.grid,args))
                          private$priors_m = rep(0,nrow(private$ind))
                          private$priors_sd = rep(1,nrow(private$ind))
@@ -143,7 +154,6 @@ adapt <- R6::R6Class("adapt",
                          dat <- list(
                            D = ncol(self$par_vals),
                            L = rep(L,length(self$par_upper)),
-                           M = self$m,
                            M_nD = nrow(private$ind),
                            Nsample = nrow(self$par_vals),
                            Npred = nsamp,
@@ -174,7 +184,7 @@ adapt <- R6::R6Class("adapt",
                                                          refresh = 100)
                          } else if(model == "linear"){
                            message("Using linear model")
-                           dat$
+                           dat$sigma_prior <- private$prior_varpar
                            fit <- private$mod_lin$sample(data = dat,
                                                          chains = chains,
                                                          parallel_chains = parallel_chains,
