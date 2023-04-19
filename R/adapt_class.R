@@ -290,7 +290,38 @@ adapt <- R6::R6Class("adapt",
                          dfp <- as.data.frame(private$ind)
                          dfp$mean <- private$priors_m
                          dfp$sd <- private$priors_sd
-                         return(list(beta = dfp, intercept = private$prior_intercept))
+                         return(list(beta = dfp,
+                                     intercept = private$prior_intercept,
+                                     lengthscale = private$prior_lengthscale,
+                                     fvar = private$prior_fscale,
+                                     variance = private$prior_varpar))
+                       },
+                       set_priors = function(beta_mean = NULL,
+                                             beta_sd = NULL,
+                                             lengthscale = NULL,
+                                             fvar = NULL,
+                                             variance = NULL){
+                         if(!is.null(beta_mean)){
+                           if(nrow(private$ind)!=length(beta_mean))stop("beta mean wrong size")
+                           private$priors_m = beta_mean
+                         }
+                         if(!is.null(beta_sd)){
+                           if(nrow(private$ind)!=length(beta_sd))stop("beta sd wrong size")
+                           private$priors_sd = beta_sd
+                         }
+                         if(!is.null(lengthscale)){
+                           if(length(self$par_upper)!=nrow(lengthscale))stop("lengthscale wrong size")
+                           if(ncol(lengthscale)!=2)stop("lengthscale should have 2 columns for mean and sd")
+                           private$prior_lengthscale = lengthscale
+                         }
+                         if(!is.null(beta_sd)){
+                           if(length(fvar)!=2)stop("beta sd wrong size")
+                           private$prior_fscale = fvar
+                         }
+                         if(!is.null(variance)){
+                           if(length(fvar)!=2)stop("beta sd wrong size")
+                           private$prior_varpar = variance
+                         }
                        }
                      ),
                      private = list(
