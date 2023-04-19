@@ -151,9 +151,15 @@ adapt <- R6::R6Class("adapt",
                            x_grid[,i] <- 2*(x_grid[,i]-self$par_lower[i])/(self$par_upper[i]-self$par_lower[i]) - 1
                          }
 
+                         if(length(L)==1){
+                           lvec <- rep(L,length(self$par_upper))
+                         } else {
+                           if(length(L)!=length(self$par_upper))stop("L wrong length")
+                           lvec = L
+                         }
                          dat <- list(
                            D = ncol(self$par_vals),
-                           L = rep(L,length(self$par_upper)),
+                           L = lvec,
                            M_nD = nrow(private$ind),
                            Nsample = nrow(self$par_vals),
                            Npred = nsamp,
