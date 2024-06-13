@@ -74,10 +74,7 @@ adapt <- R6::R6Class("adapt",
                          private$prior_varpar = c(0,1)
                          self$par_vals <- matrix(0,nrow=n,ncol=length(par_upper))
                          # simulate starting values
-                         for(i in 1:length(par_upper)){
-                           self$par_vals[,i] <- runif(n,par_lower[i],par_upper[i])
-                           if(self$par_discrete[i])self$par_vals[,i] <- round(self$par_vals[,i],0)
-                         }
+                         for(i in 1:n)self$par_vals[i,] <- private$sample_values()
                          private$all_vals = self$par_vals
                          message("Stan files will be compiled if this is the first time executing this class.")
                          bin_file <- system.file("stan","approx_gp_binom.stan",package = "AdaptSim",mustWork = TRUE)
@@ -93,6 +90,9 @@ adapt <- R6::R6Class("adapt",
                              self$fit_fn(self$data_fn(self$par_vals[i,]))
                            })
                          } else {
+                           message(paste0("Parallel execution with ",length(cl)," cores"))
+                           # I don't know why this is slower than executing in the global environment
+                           # can be improved
                            out <- pbapply::pbsapply(1:nrow(self$par_vals),function(i){
                              self$fit_fn(self$data_fn(self$par_vals[i,]))
                            },cl=cl)
@@ -102,9 +102,6 @@ adapt <- R6::R6Class("adapt",
                        adapt = function(stat,
                                         model= "binomial",
                                         alpha = 0.05,
-                                        kappa = 1,
-                                        samp_n = 20,
-                                        n_new = 100,
                                         L = 1.2,
                                         append = FALSE,
                                         chains = 3,
@@ -118,53 +115,53 @@ adapt <- R6::R6Class("adapt",
                            self$last_sim_output <- self$last_sim_output[,-idxna]
                          }
 
-                         if(is(samp_n,"data.frame")){
-                           if(ncol(samp_n)!=length(self$par_upper))stop("Wrong number of columns")
-                           for(i in 1:length(self$par_upper)){
-                             if(any(samp_n[,i]>self$par_upper[i])|any(samp_n[,i]<self$par_lower[i]))warning("Prediction values out of range")
-                           }
-                           xs <- samp_n
-                           colnames(xs) <- paste0("Var",1:ncol(xs))
-                           x <- rbind(self$par_vals,as.matrix(xs))
-                         } else if(is(samp_n,"double")){
-                           q1 <- self$par_upper[1] - self$par_lower[1]
-                           l1 <- self$par_lower[1] + q1/(2*samp_n)
-                           u1 <- self$par_upper[1] - q1/(2*samp_n)
-                           xs <- matrix(seq(l1,u1,length.out=samp_n),ncol=1)
-                           if(length(self$par_upper)>1){
-                             for(i in 2:length(self$par_upper)){
-                               q1 <- self$par_upper[i] - self$par_lower[i]
-                               l1 <- self$par_lower[i] + q1/(2*samp_n)
-                               u1 <- self$par_upper[i] - q1/(2*samp_n)
-                               xs <- expand.grid(xs, matrix(seq(l1,u1,length.out=samp_n),ncol=1))
-                             }
-                           }
-                           x <- rbind(self$par_vals,as.matrix(xs))
+                         # if(is(samp_n,"data.frame")){
+                         #   if(ncol(samp_n)!=length(self$par_upper))stop("Wrong number of columns")
+                         #   for(i in 1:length(self$par_upper)){
+                         #     if(any(samp_n[,i]>self$par_upper[i])|any(samp_n[,i]<self$par_lower[i]))warning("Prediction values out of range")
+                         #   }
+                         #   xs <- samp_n
+                         #   colnames(xs) <- paste0("Var",1:ncol(xs))
+                         #   x <- rbind(self$par_vals,as.matrix(xs))
+                         # } else if(is(samp_n,"numeric")){
+                         #   q1 <- self$par_upper[1] - self$par_lower[1]
+                         #   l1 <- self$par_lower[1] + q1/(2*samp_n)
+                         #   u1 <- self$par_upper[1] - q1/(2*samp_n)
+                         #   xs <-list(seq(l1,u1,length.out=samp_n))
+                         #   if(length(self$par_upper)>1){
+                         #     for(i in 2:length(self$par_upper)){
+                         #       q1 <- self$par_upper[i] - self$par_lower[i]
+                         #       l1 <- self$par_lower[i] + q1/(2*samp_n)
+                         #       u1 <- self$par_upper[i] - q1/(2*samp_n)
+                         #       xs <- append(xs, list(seq(l1,u1,length.out=samp_n)))
+                         #     }
+                         #   }
+                         #   xs <- expand.grid(xs)
+                         #   x <- rbind(self$par_vals,as.matrix(xs))
+                         # } else {
+                         #   stop("samp_n wrong type")
+                         # }
+                         # nsamp <- nrow(xs)
 
-                         } else {
-                           stop("samp_n wrong type")
-                         }
-                         nsamp <- nrow(xs)
-
-                         x_grid <- x
-                         for(i in 1:ncol(x_grid)){
-                           x_grid[,i] <- 2*(x_grid[,i]-self$par_lower[i])/(self$par_upper[i]-self$par_lower[i]) - 1
-                         }
+                         x_grid <- private$transform(as.matrix(self$par_vals))
 
                          if(length(L)==1){
-                           lvec <- rep(L,length(self$par_upper))
+                           private$lvec <- rep(L,length(self$par_upper))
                          } else {
                            if(length(L)!=length(self$par_upper))stop("L wrong length")
-                           lvec = L
+                           private$lvec = L
                          }
+                         
+                         LAMBDA <- private$lambda_nD(private$lvec,private$ind,length(self$par_upper))
+                         
                          dat <- list(
                            D = ncol(self$par_vals),
-                           L = lvec,
+                           L = private$lvec,
                            M_nD = nrow(private$ind),
                            Nsample = nrow(self$par_vals),
-                           Npred = nsamp,
                            y = self$last_sim_output[stat,],
                            x_grid = x_grid,
+                           lambda = LAMBDA,
                            indices = private$ind,
                            intercept_prior = private$prior_intercept,
                            beta_prior = cbind(private$priors_m,private$priors_sd),
@@ -200,104 +197,104 @@ adapt <- R6::R6Class("adapt",
                          } else {
                            stop("Model incorrectly specified")
                          }
-
+                         
+                         private$model <- model
                          self$last_stan_fit = fit
-                         ypred <- fit$draws("y_grid_predict",format = "matrix")
-                         sige <- fit$draws("sigma_e",format = "matrix")
-                         dfp <- cbind(as.data.frame(xs),data.frame(mean = colMeans(ypred)))
-                         dfp$lci <- apply(ypred,2,function(i)quantile(i,0.025))
-                         dfp$uci <- apply(ypred,2,function(i)quantile(i,0.975))
-
-                         dfp$prob <- NA
-                         dfp$entr <- NA
-
-                         ## average correlation kappa estimates commented out below.
-                         ## see code below that for updated mean CrI width approach
-
-                         lambda <- fit$draws("phi",format = "matrix")
-                         lambda <- colMeans(lambda)
-                         self$lambda <- lambda
-
-                         # if(kappa == 1){
-                         #   k <- private$kappa_1(alpha,lambda)
-                         #   self$kappa <- k
-                         #   for(i in 1:nrow(dfp)){
-                         #     dfp$prob[i] <- sum(abs(ypred[,i]-alpha) < k)/nrow(ypred)
-                         #     dfp$entr[i] <- -dfp$prob[i]*log(dfp$prob[i],2) - (1-dfp$prob[i])*log((1-dfp$prob[i]),2)
-                         #     if(dfp$prob[i]==0 || dfp$prob[i]==1)dfp$entr[i] <- 0
-                         #   }
-                         # } else if(kappa== 2){
-                         #   k <- rep(NA,nrow(dfp))
-                         #   for(i in 1:nrow(dfp)){
-                         #     k[i] <- private$kappa_2(theta = unlist(unname(dfp[i,1:ncol(self$par_vals)])),alpha,lambda)
-                         #
-                         #     dfp$prob[i] <- sum(abs(ypred[,i]-alpha) < k[i])/nrow(ypred)
-                         #     dfp$entr[i] <- -dfp$prob[i]*log(dfp$prob[i],2) - (1-dfp$prob[i])*log((1-dfp$prob[i]),2)
-                         #     if(dfp$prob[i]==0 || dfp$prob[i]==1)dfp$entr[i] <- 0
-                         #   }
-                         #   self$kappa <- cbind(dfp[,1:ncol(self$par_vals)],k=k)
-                         # }
-
-                         if(kappa==1){
-                           self$kappa <- mean(abs(dfp$uci - dfp$lci)/2)
-                           for(i in 1:nrow(dfp)){
-                                 dfp$prob[i] <- sum(abs(ypred[,i]-alpha) < self$kappa)/nrow(ypred)
-                                 dfp$entr[i] <- -dfp$prob[i]*log(dfp$prob[i],2) - (1-dfp$prob[i])*log((1-dfp$prob[i]),2)
-                                 if(dfp$prob[i]==0 || dfp$prob[i]==1)dfp$entr[i] <- 0
-                               }
-                         } else if(kappa == 2) {
-                           self$kappa <- abs(dfp$uci - dfp$lci)/2
-                           for(i in 1:nrow(dfp)){
-                             dfp$prob[i] <- sum(abs(ypred[,i]-alpha) < self$kappa[i])/nrow(ypred)
-                             dfp$entr[i] <- -dfp$prob[i]*log(dfp$prob[i],2) - (1-dfp$prob[i])*log((1-dfp$prob[i]),2)
-                             if(dfp$prob[i]==0 || dfp$prob[i]==1)dfp$entr[i] <- 0
-                           }
-                         }
-
-
-                         # get posterior values
+                         
+                         # # get posterior values
                          beta <- fit$draws("beta",format = "matrix")
+                         private$weights <- beta
                          private$priors_m <- colMeans(beta)
                          private$priors_sd <- apply(beta,2,sd)
-                         intercept <- fit$draws("intercept",format = "matrix")
-                         private$prior_intercept <- c(mean(intercept),sd(intercept))
-                         phi <- fit$draws("phi",format = "matrix")
+                         private$intercept <- fit$draws("intercept",format = "matrix")
+                         private$prior_intercept <- c(mean(private$intercept),sd(private$intercept))
+                         private$phi <- fit$draws("phi",format = "matrix")
                          for(i in 1:length(self$par_upper)){
-                           private$prior_lengthscale[,1] <- colMeans(phi)
-                           private$prior_lengthscale[,2] <- apply(phi,2,sd)
+                           private$prior_lengthscale[,1] <- colMeans(private$phi)
+                           private$prior_lengthscale[,2] <- apply(private$phi,2,sd)
                          }
-                         sigmae <- fit$draws("sigma_e",format = "matrix")
-                         private$prior_fscale <- c(mean(sigmae),sd(sigmae))
+                         private$sigmae <- fit$draws("sigma_e",format = "matrix")
+                         private$prior_fscale <- c(mean(private$sigmae),sd(private$sigmae))
                          if(model%in%c("linear","beta")){
                            sigma <- fit$draws("sigma",format = "matrix")
                            private$prior_varpar <- c(mean(sigma),sd(sigma))
                          }
-
-                         ## draw a new sample of parameters
-                         newsamp <- sample(1:nrow(dfp),n_new,replace = TRUE,prob = dfp$entr)
-
-                         d1 <- diff(dfp$Var1)[diff(dfp$Var1)>0][1]
-                         dfs <- matrix(dfp$Var1[newsamp]+runif(length(newsamp),0,d1))
-
-                         if(length(self$par_upper)>1){
-                           for(i in 2:length(self$par_upper)){
-                             d1 <- diff(dfp[,paste0("Var",i)])[diff(dfp[,paste0("Var",i)])>0][1]
-                             dfs <- cbind(dfs,matrix(dfp[,paste0("Var",i)][newsamp]+runif(length(newsamp),0,d1)))
+                       },
+                       sample = function(n, type = "var", append = FALSE, kappa = NULL, alpha = 0.05){
+                         if(is.null(private$intercept))stop("No MCMC samples")
+                         x <- private$sample_values()
+                         x <- matrix(x,nrow=1)
+                         p2 <- self$predict(x)
+                         if(type == "var"){
+                            e1 <- var(p2[1,])
+                         } else if(type == "entr") {
+                           if(private$model == "binomial"){
+                             if(is.null(kappa)){
+                               prob1 <- mean(p2[1,] > alpha)
+                             } else {
+                               prob1 <- mean(p2[1,] - alpha < kappa)
+                             }
+                             e1 <- -prob1*log(prob1,2) - (1-prob1)*log((1-prob1),2)
+                           } else {
+                             stop("Entropy not compatible with linear model")
+                           }
+                         } else if (type == "none") { 
+                           x <- matrix(NA,nrow=n, ncol= length(self$par_upper))
+                           for(i in 1:n)x[i,] <- private$sample_values()
+                         } else {
+                           stop("Type not recognized")
+                         }
+                         
+                         if(type != "none"){
+                           for(i in 1:(n-1)){
+                             x2 <- private$sample_values()
+                             x2 <- matrix(x2,nrow=1)
+                             p2 <- self$predict(x2)
+                             if(type == "var"){
+                               e2 <- var(p2[1,])
+                             } else {
+                               if(private$model == "binomial"){
+                                 if(is.null(kappa)){
+                                   prob1 <- mean(p2[1,] > alpha)
+                                 } else {
+                                   prob1 <- mean(p2[1,] - alpha < kappa)
+                                 }
+                                 e2 <- ifelse(prob1 == 1, 0, ifelse(prob1==0, 1, -prob1*log(prob1,2) - (1-prob1)*log((1-prob1),2)))
+                               } 
+                             }
+                             u1 <- runif(1)
+                             if( e2/e1 > u1) {
+                               x <- rbind(x,x2)
+                               e1 <- e2
+                             } else {
+                               x <- rbind(x,x[nrow(x),,drop=FALSE])
+                             }
+                             cat("\rIter: ",i," of ",n)
                            }
                          }
-
-                         for(i in 1:length(self$par_upper)){
-                           if(self$par_discrete[i])dfs[,i] <- round(dfs[,i],0)
-                         }
-
+                         
+                         
+                         private$all_vals <- rbind(private$all_vals,x)
                          if(append){
-                           self$par_vals <- rbind(self$par_vals,as.matrix(dfs))
+                           self$par_vals <- rbind(self$par_vals,x)
                          } else {
-                           self$par_vals <- as.matrix(dfs)
+                           self$par_vals <- x
                          }
-
-                         private$all_vals <- rbind(private$all_vals,as.matrix(dfs))
-                         self$adapt_output = dfp
+                       },
+                       predict = function(x){
+                         if(is.null(private$intercept))stop("No MCMC samples")
+                         x_grid <- private$transform(x)
+                         iter <- nrow(private$weights)
+                         dim <- nrow(private$ind)
+                         PHI <- matrix(0,nrow(x),dim)
+                         vals <- matrix(NA,nrow=nrow(x),ncol=iter)
+                         LAMBDA <- private$lambda_nD(private$lvec,private$ind,length(self$par_upper))
+                         for(i in 1:dim) PHI[,i] <- private$phi_nD(private$lvec,unlist(private$ind[i,]),x_grid)
+                         diagSPD <- private$spd_nD(private$sigmae,private$phi,LAMBDA,length(self$par_upper))
+                         diagSPD <- sqrt(diagSPD)
+                         vals <- c(private$intercept) + PHI %*% (t(diagSPD) * t(private$weights))
+                         if(private$model == "binomial") vals <- exp(vals)/(1+exp(vals))
+                         return(vals)
                        },
                        n_sims = function(){
                          nrow(private$all_vals)
@@ -383,5 +380,47 @@ adapt <- R6::R6Class("adapt",
                          }
                          n <- 1 + (N - 1)*prod(rho)
                          return(1.96 * sqrt(alpha*(1-alpha)/n))
-                       }
+                       },
+                       weights = NULL,
+                       lambda_nD = function(L, m, D){
+                         lam <- t(m) * (pi/(2*L))
+                         return(lam^2)
+                       },
+                       spd_nD = function(sigma, phi, w, D){
+                         phisq <- phi^2
+                         S = c(sigma)^2 * sqrt(2*pi)^D * (apply(phi,1,prod) * exp(-0.5*(phisq%*%w)))
+                         return(S)
+                       },
+                       phi_nD = function(L, m, x){
+                         fi <- t(1/(sqrt(L))* sin(m * (pi*(t(x)+L) * (1/(2*L))) ))
+                         fi1 <- apply(fi,1,prod)
+                         return(fi1)
+                       },
+                       transform = function(x){
+                         x_grid <- x
+                         for(i in 1:ncol(x_grid)){
+                           x_grid[,i] <- 2*(x_grid[,i]-self$par_lower[i])/(self$par_upper[i]-self$par_lower[i]) - 1
+                         }
+                         return(x_grid)
+                       },
+                       back_transform = function(x){
+                         x_grid <- x
+                         for(i in 1:ncol(x_grid)){
+                           x_grid[,i] <- (self$par_upper[i]-self$par_lower[i])*(x_grid[,i] + 1)/2 + self$par_lower[i]
+                         }
+                         return(x_grid)
+                       },
+                       sample_values = function(){
+                         x <- rep(NA, length(self$par_upper))
+                         for(i in 1:length(x)){
+                           x[i] <- runif(1,self$par_lower[i],self$par_upper[i])
+                           if(self$par_discrete[i])x[i] <- round(x[i],0)
+                         }
+                         return(x)
+                       },
+                       sigmae = NULL,
+                       phi = NULL,
+                       intercept = NULL,
+                       lvec = NULL,
+                       model = NULL
                      ))
