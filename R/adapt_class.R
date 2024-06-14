@@ -50,11 +50,11 @@ adapt <- R6::R6Class("adapt",
                          self$m = m
                          if(length(m)==1){
                            args <- list(1:m)
-                           if(length(par_upper)>1){
-                             for(i in 2:length(par_upper)){
-                               args[[i]] <- 1:m
-                             }
-                           }
+                           # if(length(par_upper)>1){
+                           #   for(i in 2:length(par_upper)){
+                           #     args[[i]] <- 1:m
+                           #   }
+                           # }
                          } else {
                            if(length(m)!=length(par_upper))stop("m wrong length")
                            args <- list(1:m[1])
@@ -79,8 +79,9 @@ adapt <- R6::R6Class("adapt",
                          message("Stan files will be compiled if this is the first time executing this class.")
                          bin_file <- system.file("stan","approx_gp_binom.stan",package = "AdaptSim",mustWork = TRUE)
                          lin_file <- system.file("stan","approx_gp_lin.stan",package = "AdaptSim",mustWork = TRUE)
-
+                         bin_embed_file <- system.file("stan","approx_gp_binom_linembed.stan",package = "AdaptSim",mustWork = TRUE)
                          private$mod_bin = cmdstanr::cmdstan_model(bin_file)
+                         private$mod_bin_embed = cmdstanr::cmdstan_model(bin_embed_file)
                          private$mod_lin = cmdstanr::cmdstan_model(lin_file)
                        },
                        # model fitting simulation
@@ -99,8 +100,10 @@ adapt <- R6::R6Class("adapt",
                          }
                          self$last_sim_output = out
                        },
+                       # type can be "linear" for linear embedding, "additive" for additive, and "full" for complete D-dimensional model
                        adapt = function(stat,
                                         model= "binomial",
+                                        type = "linear",
                                         alpha = 0.05,
                                         L = 1.2,
                                         append = FALSE,
@@ -115,45 +118,25 @@ adapt <- R6::R6Class("adapt",
                            self$last_sim_output <- self$last_sim_output[,-idxna]
                          }
 
-                         # if(is(samp_n,"data.frame")){
-                         #   if(ncol(samp_n)!=length(self$par_upper))stop("Wrong number of columns")
-                         #   for(i in 1:length(self$par_upper)){
-                         #     if(any(samp_n[,i]>self$par_upper[i])|any(samp_n[,i]<self$par_lower[i]))warning("Prediction values out of range")
-                         #   }
-                         #   xs <- samp_n
-                         #   colnames(xs) <- paste0("Var",1:ncol(xs))
-                         #   x <- rbind(self$par_vals,as.matrix(xs))
-                         # } else if(is(samp_n,"numeric")){
-                         #   q1 <- self$par_upper[1] - self$par_lower[1]
-                         #   l1 <- self$par_lower[1] + q1/(2*samp_n)
-                         #   u1 <- self$par_upper[1] - q1/(2*samp_n)
-                         #   xs <-list(seq(l1,u1,length.out=samp_n))
-                         #   if(length(self$par_upper)>1){
-                         #     for(i in 2:length(self$par_upper)){
-                         #       q1 <- self$par_upper[i] - self$par_lower[i]
-                         #       l1 <- self$par_lower[i] + q1/(2*samp_n)
-                         #       u1 <- self$par_upper[i] - q1/(2*samp_n)
-                         #       xs <- append(xs, list(seq(l1,u1,length.out=samp_n)))
-                         #     }
-                         #   }
-                         #   xs <- expand.grid(xs)
-                         #   x <- rbind(self$par_vals,as.matrix(xs))
-                         # } else {
-                         #   stop("samp_n wrong type")
-                         # }
-                         # nsamp <- nrow(xs)
-
                          x_grid <- private$transform(as.matrix(self$par_vals))
 
                          if(length(L)==1){
-                           private$lvec <- rep(L,length(self$par_upper))
+                           if(type == "linear"){
+                             private$lvec <- c(L*length(self$par_upper))
+                           } else {
+                             private$lvec <- rep(L,length(self$par_upper))
+                           }
                          } else {
                            if(length(L)!=length(self$par_upper))stop("L wrong length")
                            private$lvec = L
                          }
-                         
-                         LAMBDA <- private$lambda_nD(private$lvec,private$ind,length(self$par_upper))
-                         
+                         LAMBDA <- private$lambda_nD(private$lvec,private$ind,ifelse(type == "linear",1,length(self$par_upper)))
+
+                         if(type == "linear" & is.null(private$avec_prior)){
+                             private$avec_prior <- rep(0,length(self$par_upper))
+                             private$avec_conc <- 0
+                         }
+
                          dat <- list(
                            D = ncol(self$par_vals),
                            L = private$lvec,
@@ -169,6 +152,9 @@ adapt <- R6::R6Class("adapt",
                            fscale_prior = private$prior_fscale
                          )
 
+                         if(type == "linear") dat <- append(dat,list(avec_prior = private$avec_prior,
+                                                                     avec_conc = private$avec_conc))
+
                          if(private$prior_intercept[1] == 0) {
                           if(model == "binomial"){
                             dat$intercept_prior[1] <- log(alpha/(1-alpha))
@@ -179,12 +165,21 @@ adapt <- R6::R6Class("adapt",
 
                          if(model == "binomial"){
                            message("Using binomial model")
-                           fit <- private$mod_bin$sample(data = dat,
-                                                         chains = chains,
-                                                         parallel_chains = parallel_chains,
-                                                         iter_warmup = warmup,
-                                                         iter_sampling = sampling,
-                                                         refresh = 100)
+                           if(type == "linear"){
+                             fit <- private$mod_bin_embed$sample(data = dat,
+                                                           chains = chains,
+                                                           parallel_chains = parallel_chains,
+                                                           iter_warmup = warmup,
+                                                           iter_sampling = sampling,
+                                                           refresh = 100)
+                           } else {
+                             fit <- private$mod_bin$sample(data = dat,
+                                                                 chains = chains,
+                                                                 parallel_chains = parallel_chains,
+                                                                 iter_warmup = warmup,
+                                                                 iter_sampling = sampling,
+                                                                 refresh = 100)
+                           }
                          } else if(model == "linear"){
                            message("Using linear model")
                            dat$sigma_prior <- private$prior_varpar
@@ -197,10 +192,11 @@ adapt <- R6::R6Class("adapt",
                          } else {
                            stop("Model incorrectly specified")
                          }
-                         
+
                          private$model <- model
+                         private$type <- type
                          self$last_stan_fit = fit
-                         
+
                          # # get posterior values
                          beta <- fit$draws("beta",format = "matrix")
                          private$weights <- beta
@@ -209,6 +205,7 @@ adapt <- R6::R6Class("adapt",
                          private$intercept <- fit$draws("intercept",format = "matrix")
                          private$prior_intercept <- c(mean(private$intercept),sd(private$intercept))
                          private$phi <- fit$draws("phi",format = "matrix")
+                         if(type == "linear")private$a_vector <- fit$draws("a",format = "matrix")
                          for(i in 1:length(self$par_upper)){
                            private$prior_lengthscale[,1] <- colMeans(private$phi)
                            private$prior_lengthscale[,2] <- apply(private$phi,2,sd)
@@ -218,6 +215,10 @@ adapt <- R6::R6Class("adapt",
                          if(model%in%c("linear","beta")){
                            sigma <- fit$draws("sigma",format = "matrix")
                            private$prior_varpar <- c(mean(sigma),sd(sigma))
+                         }
+                         if(type == "linear"){
+                           private$avec_prior <- colMeans(private$a_vector)
+                           private$avec_conc <- 1/var(drop(matrix(private$a_vector)))
                          }
                        },
                        sample = function(n, type = "var", append = FALSE, kappa = NULL, alpha = 0.05){
@@ -238,13 +239,13 @@ adapt <- R6::R6Class("adapt",
                            } else {
                              stop("Entropy not compatible with linear model")
                            }
-                         } else if (type == "none") { 
+                         } else if (type == "none") {
                            x <- matrix(NA,nrow=n, ncol= length(self$par_upper))
                            for(i in 1:n)x[i,] <- private$sample_values()
                          } else {
                            stop("Type not recognized")
                          }
-                         
+
                          if(type != "none"){
                            for(i in 1:(n-1)){
                              x2 <- private$sample_values()
@@ -260,7 +261,7 @@ adapt <- R6::R6Class("adapt",
                                    prob1 <- mean(p2[1,] - alpha < kappa)
                                  }
                                  e2 <- ifelse(prob1 == 1, 0, ifelse(prob1==0, 1, -prob1*log(prob1,2) - (1-prob1)*log((1-prob1),2)))
-                               } 
+                               }
                              }
                              u1 <- runif(1)
                              if( e2/e1 > u1) {
@@ -272,8 +273,8 @@ adapt <- R6::R6Class("adapt",
                              cat("\rIter: ",i," of ",n)
                            }
                          }
-                         
-                         
+
+
                          private$all_vals <- rbind(private$all_vals,x)
                          if(append){
                            self$par_vals <- rbind(self$par_vals,x)
@@ -288,11 +289,24 @@ adapt <- R6::R6Class("adapt",
                          dim <- nrow(private$ind)
                          PHI <- matrix(0,nrow(x),dim)
                          vals <- matrix(NA,nrow=nrow(x),ncol=iter)
-                         LAMBDA <- private$lambda_nD(private$lvec,private$ind,length(self$par_upper))
-                         for(i in 1:dim) PHI[,i] <- private$phi_nD(private$lvec,unlist(private$ind[i,]),x_grid)
-                         diagSPD <- private$spd_nD(private$sigmae,private$phi,LAMBDA,length(self$par_upper))
-                         diagSPD <- sqrt(diagSPD)
-                         vals <- c(private$intercept) + PHI %*% (t(diagSPD) * t(private$weights))
+                         LAMBDA <- private$lambda_nD(private$lvec,private$ind,ifelse(private$type=="linear",1,length(self$par_upper)))
+                         if(private$type=="linear"){
+                           xa <- x_grid %*% t(private$a_vector)
+                           diagSPD <- private$spd_nD(private$sigmae,private$phi,LAMBDA,1)
+                           diagSPD <- sqrt(diagSPD)
+                           spd_beta <- t(diagSPD) * t(private$weights)
+                           for(j in 1:iter){
+                             for(i in 1:dim) PHI[,i] <- private$phi_nD(private$lvec,unlist(private$ind[i,]),xa[,j])
+                             vals[,j] <- c(private$intercept[j,]) + PHI %*% c(spd_beta[,j])
+                             cat("\rIter: ",j," of ",iter)
+                           }
+                         } else {
+                           for(i in 1:dim) PHI[,i] <- private$phi_nD(private$lvec,unlist(private$ind[i,]),x_grid)
+                           diagSPD <- private$spd_nD(private$sigmae,private$phi,LAMBDA,length(self$par_upper))
+                           diagSPD <- sqrt(diagSPD)
+                           vals <- c(private$intercept) + PHI %*% (t(diagSPD) * t(private$weights))
+                         }
+
                          if(private$model == "binomial") vals <- exp(vals)/(1+exp(vals))
                          return(vals)
                        },
@@ -323,7 +337,7 @@ adapt <- R6::R6Class("adapt",
                            private$priors_sd = beta_sd
                          }
                          if(!is.null(lengthscale)){
-                           if(length(self$par_upper)!=nrow(lengthscale))stop("lengthscale wrong size")
+                           if(length(self$par_upper)!=nrow(lengthscale) & nrow(lengthscale) > 1)stop("lengthscale wrong size")
                            if(ncol(lengthscale)!=2)stop("lengthscale should have 2 columns for mean and sd")
                            private$prior_lengthscale = lengthscale
                          }
@@ -348,6 +362,7 @@ adapt <- R6::R6Class("adapt",
                        all_vals = NULL,
                        mod_lin = NULL,
                        mod_bin = NULL,
+                       mod_bin_embed = NULL,
                        kappa_1 = function(alpha, lambda, sigma_e = NULL){
                          N <- nrow(private$all_vals)
                          rho <- rep(NA,length(self$par_upper))
@@ -422,5 +437,9 @@ adapt <- R6::R6Class("adapt",
                        phi = NULL,
                        intercept = NULL,
                        lvec = NULL,
-                       model = NULL
+                       model = NULL,
+                       type = NULL,
+                       a_vector = NULL,
+                       avec_prior = NULL,
+                       avec_conc = NULL
                      ))
