@@ -31,9 +31,8 @@ data {
   array[D] real L;
   int<lower=1> M_nD; //total basis functions m1*m2*...*mD
   int<lower=1> Nsample; //number of observations per time period
-  int<lower=1> Npred;
   array[Nsample] real y;
-  matrix[Nsample+Npred,D] x_grid; //prediction grid and observations
+  matrix[Nsample,D] x_grid; //prediction grid and observations
   array[M_nD,D] int indices;
   matrix[D,M_nD] lambda;
   array[2] real intercept_prior;
@@ -67,20 +66,11 @@ transformed parameters{
 }
 model{
   int grainsize = 1;
-  // for(i in 1:M_nD)beta[i] ~ normal(beta_prior[i,1],beta_prior[i,2]);
   for(d in 1:D)phi[d] ~ normal(lengthscale_prior[d,1],lengthscale_prior[d,2]);
   sigma_e ~ normal(fscale_prior[1],fscale_prior[2]);
   intercept ~ normal(intercept_prior[1],intercept_prior[2]);
-  sigma ~ normal(sigma_prior[1],sigma_prior[2]);
-  //y ~ normal(f,sigma);
+  sigma ~ gamma(sigma_prior[1],sigma_prior[2]);
   target += reduce_sum(partial_gauss_lpdf,to_array_1d(beta),grainsize,beta_prior[,1],beta_prior[,2]);
-  target += reduce_sum(partial_sum_lpdf,y,grainsize,f[1:Nsample],sigma);
+  target += reduce_sum(partial_sum_lpdf,y,grainsize,f,sigma);
 }
 
-// generated quantities{
-//   vector[Npred] y_grid_predict;
-// 
-//   for(i in (Nsample+1):(Nsample+Npred)){
-//     y_grid_predict[i-Nsample] = intercept + f[i];
-//   }
-// }
