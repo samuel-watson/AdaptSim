@@ -111,12 +111,14 @@ adapt <- R6::R6Class("adapt",
                          }
                          if(length(self$par_upper)<=2 & type == "as")stop("No active subspace method for D < 3")
                          args <- list(1:self$m[1])
-                         if(type != "additive"){
+                         if(type %in% c("as","full")){
                            upper_dim <- ifelse(type == "as",d,length(self$par_upper))
                            for(i in 2:upper_dim){
                              args[[i]] <- 1:self$m[i]
                            }
                            private$ind <- as.matrix(do.call(expand.grid,args))
+                         } else if(type == "linear") {
+                           private$ind <- matrix(1:self$m[1],ncol=1)
                          } else {
                            total_fn <- sum(self$m)
                          }
@@ -175,6 +177,11 @@ adapt <- R6::R6Class("adapt",
                              private$avec_prior <- rep(0,length(self$par_upper))
                              private$avec_conc <- 0
                          }
+                         
+                         if(type == "linear" & nrow(private$prior_lengthscale) != 1){
+                           warning("Length scale prior wrong dimension for linear model, taking only the first entry")
+                           private$prior_lengthscale <- private$prior_lengthscale[1,,drop=FALSE]
+                         } 
 
                          dat <- list(
                            D = ncol(self$par_vals),
