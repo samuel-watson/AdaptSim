@@ -19,12 +19,12 @@ functions {
     }
     return fi1;
   }
-  real partial_sum_lpmf(array[] int y,int start, int end, vector mu){
-    return bernoulli_logit_lpmf(y[start:end]|mu[start:end]);
-  }
-  real partial_gauss_lpdf(array[] real y,int start, int end, array[] real mu, array[] real sigma){
-    return normal_lpdf(y[start:end]|mu[start:end],sigma[start:end]);
-  }
+  // real partial_sum_lpmf(array[] int y,int start, int end, vector mu){
+  //   return bernoulli_logit_lpmf(y[start:end]|mu[start:end]);
+  // }
+  // real partial_gauss_lpdf(array[] real y,int start, int end, array[] real mu, array[] real sigma){
+  //   return normal_lpdf(y[start:end]|mu[start:end],sigma[start:end]);
+  //}
 }
 data {
   int<lower=2> D; //number of dimensions
@@ -65,13 +65,16 @@ transformed parameters{
 
 }
 model{
-  int grainsize = 1;
+  // int grainsize = 1;
   for(i in 1:d)phi[i] ~ normal(lengthscale_prior[i,1],lengthscale_prior[i,2]);
   sigma_e ~ normal(fscale_prior[1],fscale_prior[2]);
   intercept ~ normal(intercept_prior[1],intercept_prior[2]);
   for(i in 1:(d*D))to_vector(Amat)[i] ~ normal(a_mat_prior_mean[i],a_mat_prior_sd[i]);
   //to_vector(Amat) ~ std_normal();
-  target += reduce_sum(partial_gauss_lpdf,to_array_1d(beta),grainsize,beta_prior[,1],beta_prior[,2]);
-  target += reduce_sum(partial_sum_lpmf,y,grainsize,f);
+  beta ~ normal(beta_prior[,1], beta_prior[,2]);
+  y ~ bernoulli_logit(f);
+
+  // target += reduce_sum(partial_gauss_lpdf,to_array_1d(beta),grainsize,beta_prior[,1],beta_prior[,2]);
+  // target += reduce_sum(partial_sum_lpmf,y,grainsize,f);
 }
 

@@ -177,11 +177,11 @@ adapt <- R6::R6Class("adapt",
                              private$avec_prior <- rep(0,length(self$par_upper))
                              private$avec_conc <- 0
                          }
-                         
+
                          if(type == "linear" & nrow(private$prior_lengthscale) != 1){
                            warning("Length scale prior wrong dimension for linear model, taking only the first entry")
                            private$prior_lengthscale <- private$prior_lengthscale[1,,drop=FALSE]
-                         } 
+                         }
 
                          dat <- list(
                            D = ncol(self$par_vals),
@@ -302,10 +302,10 @@ adapt <- R6::R6Class("adapt",
                            private$avec_conc <- 1/var(drop(matrix(private$a_vector)))
                          }
                          if(type == "as"){
-                           private$a_mat <- fit$draws("A",format = "matrix")
-                           aa <- mod$last_stan_fit$draws("Amat",format="matrix")
-                           private$a_mat_prior[1,] <- colMeans(private$a_mat)
-                           private$a_mat_prior[2,] <- apply(private$a_mat,2,sd)
+                           private$a_mat <- self$last_stan_fit$draws("A",format = "matrix")
+                           aa <- self$last_stan_fit$draws("Amat",format="matrix")
+                           private$a_mat_prior[1,] <- colMeans(aa)
+                           private$a_mat_prior[2,] <- apply(aa,2,sd)
                          }
                        },
                        sample = function(n, type = "var", append = FALSE, kappa = NULL, alpha = 0.05){
