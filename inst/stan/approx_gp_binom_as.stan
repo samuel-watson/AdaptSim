@@ -28,7 +28,7 @@ functions {
 }
 data {
   int<lower=2> D; //number of dimensions
-  int<lower=2,upper=D> d; // subspace number of dimensions
+  int<lower=1,upper=D> d; // subspace number of dimensions
   array[d] real L;
   int<lower=1> M_nD; //total basis functions m1*m2*...*md
   int<lower=1> Nsample; //number of observations
