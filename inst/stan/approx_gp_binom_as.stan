@@ -4,27 +4,23 @@ functions {
     S = sigma^2 * sqrt(2*pi())^D * prod(phi) * exp(-0.5*((phi .* phi) * w));
     return sqrt(S');
   }
- vector phi_nD(array[] real L, array[] int m, matrix x) {
+
+  matrix phi_nD(data array[] real L, data array[,] int m, matrix x, data int M_nD) {
     int c = cols(x);
     int r = rows(x);
-
-    matrix[r,c] fi;
-    vector[r] fi1;
-    for (i in 1:c){
-      fi[,i] = 1/sqrt(L[i])*sin(m[i]*pi()*(x[,i]+L[i])/(2*L[i]));
+    vector[r] xcol;
+    matrix[r,M_nD] phi = rep_matrix(1.0,r,M_nD);
+    real sqrtl;
+    for(i in 1:c){
+      xcol = (x[,i]+L[i])*pi()/(2*L[i]);
+      sqrtl = 1/sqrt(L[i]);
+      phi *= pow(sqrtl,M_nD);
+      for(j in 1:M_nD){
+        phi[,j] = phi[,j] .* sin(m[j,i]*xcol);
+      }
     }
-    fi1 = fi[,1];
-    for (i in 2:c){
-      fi1 = fi1 .* fi[,i];
-    }
-    return fi1;
+    return phi;
   }
-  // real partial_sum_lpmf(array[] int y,int start, int end, vector mu){
-  //   return bernoulli_logit_lpmf(y[start:end]|mu[start:end]);
-  // }
-  // real partial_gauss_lpdf(array[] real y,int start, int end, array[] real mu, array[] real sigma){
-  //   return normal_lpdf(y[start:end]|mu[start:end],sigma[start:end]);
-  //}
 }
 data {
   int<lower=2> D; //number of dimensions
@@ -52,29 +48,34 @@ parameters {
 }
 
 transformed parameters{
-  vector[Nsample] f;
+  matrix[Nsample,1] f;
   vector[M_nD] diagSPD;
-  matrix[D,d] A = qr_thin_Q(Amat);
+  matrix[D,d] A;
   matrix[Nsample,M_nD] PHI;
+  matrix[Nsample,d] XA;
 
-  for (m in 1:M_nD){
-    PHI[,m] = phi_nD(L, indices[m,], x_grid * A);
-  }
+  A = qr_thin_Q(Amat);
+  XA = x_grid * A;
+  PHI = phi_nD(L, indices, XA, M_nD);
   diagSPD = spd_nD(sigma_e, phi, lambda, 1);
-  f = intercept + PHI * (diagSPD .* beta);
+  f[,1] = intercept + PHI * (diagSPD .* beta);
 
 }
 model{
-  // int grainsize = 1;
+  vector[1] model_coef;
+  model_coef[1] = 1.0;
+
   for(i in 1:d)phi[i] ~ normal(lengthscale_prior[i,1],lengthscale_prior[i,2]);
   sigma_e ~ normal(fscale_prior[1],fscale_prior[2]);
   intercept ~ normal(intercept_prior[1],intercept_prior[2]);
-  for(i in 1:(d*D))to_vector(Amat)[i] ~ normal(a_mat_prior_mean[i],a_mat_prior_sd[i]);
-  //to_vector(Amat) ~ std_normal();
   beta ~ normal(beta_prior[,1], beta_prior[,2]);
-  y ~ bernoulli_logit(f);
 
-  // target += reduce_sum(partial_gauss_lpdf,to_array_1d(beta),grainsize,beta_prior[,1],beta_prior[,2]);
-  // target += reduce_sum(partial_sum_lpmf,y,grainsize,f);
+  for(i in 1:D){
+      for(j in 1:d){
+        Amat[i,j] ~ normal(a_mat_prior_mean[i + (j-1)*D],a_mat_prior_sd[i + (j-1)*D]);
+      }
+    }
+
+  target += bernoulli_logit_glm_lpmf(y | f, 0.0, model_coef);
 }
 

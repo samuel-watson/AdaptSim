@@ -18,7 +18,7 @@ functions {
   }
 }
 data {
-  int<lower=1> D; //number of dimensions
+  int<lower=1> D; //number of dimension
   array[D] real L;
   array[D] int<lower=1> M_nD; //total basis functions m1*m2*...*mD
   int<lower=1> total_fn;

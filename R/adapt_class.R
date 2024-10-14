@@ -62,14 +62,14 @@ adapt <- R6::R6Class("adapt",
                          lin_embed_file <- system.file("stan","approx_gp_lin_linembed.stan",package = "AdaptSim",mustWork = TRUE)
                          lin_additive_file <- system.file("stan","approx_gp_lin_additive.stan",package = "AdaptSim",mustWork = TRUE)
                          lin_as_file <- system.file("stan","approx_gp_lin_as.stan",package = "AdaptSim",mustWork = TRUE)
-                         private$mod_bin = cmdstanr::cmdstan_model(bin_file)
-                         private$mod_bin_embed = cmdstanr::cmdstan_model(bin_embed_file)
-                         private$mod_bin_additive = cmdstanr::cmdstan_model(bin_additive_file)
-                         private$mod_bin_as = cmdstanr::cmdstan_model(bin_as_file)
-                         private$mod_lin = cmdstanr::cmdstan_model(lin_file)
-                         private$mod_lin_embed = cmdstanr::cmdstan_model(lin_embed_file)
-                         private$mod_lin_additive = cmdstanr::cmdstan_model(lin_additive_file)
-                         private$mod_lin_as = cmdstanr::cmdstan_model(lin_as_file)
+                         private$mod_bin = cmdstanr::cmdstan_model(bin_file, stanc_options = list("Oexperimental"))
+                         private$mod_bin_embed = cmdstanr::cmdstan_model(bin_embed_file, stanc_options = list("Oexperimental"))
+                         private$mod_bin_additive = cmdstanr::cmdstan_model(bin_additive_file, stanc_options = list("Oexperimental"))
+                         private$mod_bin_as = cmdstanr::cmdstan_model(bin_as_file, stanc_options = list("Oexperimental"))
+                         private$mod_lin = cmdstanr::cmdstan_model(lin_file, stanc_options = list("Oexperimental"))
+                         private$mod_lin_embed = cmdstanr::cmdstan_model(lin_embed_file, stanc_options = list("Oexperimental"))
+                         private$mod_lin_additive = cmdstanr::cmdstan_model(lin_additive_file, stanc_options = list("Oexperimental"))
+                         private$mod_lin_as = cmdstanr::cmdstan_model(lin_as_file, stanc_options = list("Oexperimental"))
                        },
                        # model fitting simulation
                        sim = function(cl = NULL){
@@ -115,11 +115,15 @@ adapt <- R6::R6Class("adapt",
                          if(length(self$par_upper)<=2 & type == "as")stop("No active subspace method for D < 3")
                          args <- list(1:self$m[1])
                          if(type %in% c("as","full")){
-                           upper_dim <- ifelse(type == "as",d,length(self$par_upper))
-                           for(i in 2:upper_dim){
-                             args[[i]] <- 1:self$m[i]
+                           if(type == "as" & d == 1){
+                             private$ind <- matrix(1:self$m[1],ncol=1)
+                           } else {
+                             upper_dim <- ifelse(type == "as",d,length(self$par_upper))
+                             for(i in 2:upper_dim){
+                               args[[i]] <- 1:self$m[i]
+                             }
+                             private$ind <- as.matrix(do.call(expand.grid,args))
                            }
-                           private$ind <- as.matrix(do.call(expand.grid,args))
                          } else if(type == "linear") {
                            private$ind <- matrix(1:self$m[1],ncol=1)
                          } else {
@@ -147,7 +151,7 @@ adapt <- R6::R6Class("adapt",
                          }
 
                          x_grid <- private$transform(as.matrix(self$par_vals))
-                         
+
                          if(type == "addint"){
                            for(i in 1:(dcol-1)){
                              for(j in (i+1):dcol){
@@ -195,7 +199,7 @@ adapt <- R6::R6Class("adapt",
                          }
 
                          dat <- list(
-                           D = ncol(self$par_vals),
+                           D = ncol(x_grid),
                            L = private$lvec,
                            Nsample = nrow(self$par_vals),
                            y = self$last_sim_output[stat,],
@@ -246,7 +250,7 @@ adapt <- R6::R6Class("adapt",
                                                            iter_warmup = warmup,
                                                            iter_sampling = sampling,
                                                            refresh = 100)
-                           } else if (type == "additive") {
+                           } else if (type %in% c("additive","addint")) {
                              fit <- private$mod_bin_additive$sample(data = dat,
                                                                  chains = chains,
                                                                  parallel_chains = parallel_chains,
@@ -321,42 +325,39 @@ adapt <- R6::R6Class("adapt",
                          if(is.null(private$intercept))stop("No MCMC samples")
                          x <- private$sample_values()
                          x <- matrix(x,nrow=1)
-                         p2 <- self$predict(x)
+                         p2 <- self$predict(x, TRUE)
                          e1 <- var(p2[1,])
-                         if(type == "entr") {
-                           if(private$model == "binomial"){
-                             e1 <- 2*(1-pnorm(abs((p2[1,] - alpha)/e1)))
-                           } else {
-                             stop("Entropy not compatible with linear model")
-                           }
-                         } else if (type == "none") {
+                         if (type == "none") {
                            x <- matrix(NA,nrow=n, ncol= length(self$par_upper))
                            for(i in 1:n)x[i,] <- private$sample_values()
                          } else {
-                           stop("Type not recognized")
-                         }
-
-                         if(type != "none"){
-                           for(i in 1:(n-1)){
-                             x2 <- private$sample_values()
-                             x2 <- matrix(x2,nrow=1)
-                             p2 <- self$predict(x2)
-                             e2 <- var(p2[1,])
+                           mean_e2 <- 1
+                           while(nrow(x) < n){
+                             n_x <- (n - nrow(x))/mean_e2
+                             x2 <- matrix(NA,nrow=n_x, ncol= length(self$par_upper))
+                             for(i in 1:n_x)x2[i,] <- private$sample_values()
+                             p2 <- self$predict(x2, TRUE)
+                             e2 <- apply(p2,1,sd)#var(p2[1,])
                              if(private$model == "binomial"){
-                               prob1 <- 2*(1-pnorm(abs((p2[1,] - alpha)/e1)))
-                               e2 <- ifelse(prob1 == 1, 0, ifelse(prob1==0, 1, -prob1*log(prob1,2) - (1-prob1)*log((1-prob1),2)))
-                             }
-                             u1 <- runif(1)
-                             if( e2/e1 > u1) {
-                               x <- rbind(x,x2)
-                               e1 <- e2
+                               prob1 <- 2*(1-pnorm(abs((rowMeans(p2)) - alpha)/e2))
+                               e2 <- sapply(prob1, function(i)ifelse(i == 1, 0, ifelse(i==0, 1, -i*log(i,2) - (1-i)*log((1-i),2))))
                              } else {
-                               x <- rbind(x,x[nrow(x),,drop=FALSE])
+                               e2 <- e2/max(e2)
                              }
-                             cat("\rIter: ",i," of ",n)
+                             u1 <- runif(nrow(x2))
+                             mean_e2 <- mean(e2)
+                             n_e2 <- sum(e2 > u1)
+                             if(n_e2 > 0){
+                               x2 <- x2[e2 > u1,]
+                               if(nrow(x2) + nrow(x) > n){
+                                 x <- rbind(x,x2[1:(n - nrow(x)),,drop=FALSE])
+                               } else {
+                                 x <- rbind(x,x2)
+                               }
+                             }
+                             cat("\rSample: ",nrow(x)," of ",n)
                            }
                          }
-
 
                          private$all_vals <- rbind(private$all_vals,x)
                          if(append){
@@ -365,20 +366,20 @@ adapt <- R6::R6Class("adapt",
                            self$par_vals <- x
                          }
                        },
-                       predict = function(x){
-                         message(paste0("Predicting from model type: ",private$type))
+                       predict = function(x, quietly = FALSE){
+                         if(!quietly) message(paste0("Predicting from model type: ",private$type))
                          if(is.null(private$intercept))stop("No MCMC samples")
                          x_grid <- private$transform(x)
                          if(private$type == "addint"){
                            dcol <- ncol(x_grid)
                            for(i in 1:(dcol-1)){
-                             for(j in i:dcol){
+                             for(j in (i+1):dcol){
                                x_grid <- cbind(x_grid, x_grid[,i]*x_grid[,j])
                              }
                            }
                          }
                          iter <- nrow(private$weights)
-                         dim <- ifelse(private$type == "additive", sum(self$m), nrow(private$ind))
+                         dim <- ifelse(private$type %in% c("additive","addint"), sum(self$m), nrow(private$ind))
                          PHI <- matrix(0,nrow(x),dim)
                          vals <- matrix(NA,nrow=nrow(x),ncol=iter)
                          n_d <- ifelse(private$type == "as",private$as_d,length(self$par_upper))
@@ -387,7 +388,7 @@ adapt <- R6::R6Class("adapt",
                            LAMBDA <- private$lambda_nD(private$lvec,private$ind,ifelse(private$type=="linear",1,n_d))
                          } else {
                            LAMBDA <- rep(NA, dim)
-                           dcol <- ifelse(type == "additive", length(self$par_upper), length(self$par_upper)+length(self$par_upper)*(length(self$par_upper)-1)/2)
+                           dcol <- ifelse(private$type == "additive", length(self$par_upper), length(self$par_upper)+length(self$par_upper)*(length(self$par_upper)-1)/2)
                            for(i in 1:dcol){
                              for(j in 1:self$m[i]){
                                mcol <- ifelse(i == 1, 0, sum(self$m[1:(i-1)]))
@@ -421,6 +422,7 @@ adapt <- R6::R6Class("adapt",
                            diagSPD <- private$spd_nD(private$sigmae,private$phi,LAMBDA,private$as_d)
                            diagSPD <- sqrt(diagSPD)
                            spd_beta <- t(diagSPD) * t(private$weights)
+                           n_d
                            for(j in 1:iter){
                              A <- matrix(c(private$a_mat[j,]),nrow=length(self$par_upper))
                              xa <- x_grid %*% A
