@@ -60,27 +60,39 @@ df <- data_sim(c(10,10,0.4,0.05))
 fit_model(df)
 
 # Define the 15 points provided by the instructor
-vals <- matrix(c(
-  34, 199, 0.23637690, 0.09193269,
-  45, 130, 0.11546262, 0.19733145,
-  13,  38, 0.00000000, 0.23485321,
-  17,  28, 0.25326985, 0.03161119,
-  6, 176, 0.90833488, 0.00100000,
-  20,   5, 1.00000000, 0.40000000,
-  8, 200, 0.23894541, 0.14370243,
-  20,  33, 1.00000000, 0.10095784,
-  60,   5, 0.98865012, 0.39488326,
-  57, 189, 0.94585527, 0.37815695,
-  46,   26, 0.05879151, 0.31761570,
-  44, 142, 0.69983646, 0.27835633,
-  31, 146, 0.62735035, 0.01168396,
-  57,  53, 0.07166746, 0.02867074,
-  60, 200, 1.00000000, 0.01887049
-), ncol = 4, byrow = TRUE)
+
 
 standard_sim <- function(x)fit_model(data_sim(x))
 
 if(file.exists(paste0(getwd(),"/results/sim_example.RDS"))){
+  # deliberately chosen values with maximal spread
+  vals <- matrix(c(
+    34, 199, 0.23637690, 0.09193269,
+    45, 130, 0.11546262, 0.19733145,
+    13,  38, 0.00000000, 0.23485321,
+    17,  28, 0.25326985, 0.03161119,
+    6, 176, 0.90833488, 0.00100000,
+    20,   5, 1.00000000, 0.40000000,
+    8, 200, 0.23894541, 0.14370243,
+    20,  33, 1.00000000, 0.10095784,
+    60,   5, 0.98865012, 0.39488326,
+    57, 189, 0.94585527, 0.37815695,
+    46,   26, 0.05879151, 0.31761570,
+    44, 142, 0.69983646, 0.27835633,
+    31, 146, 0.62735035, 0.01168396,
+    57,  53, 0.07166746, 0.02867074,
+    60, 200, 1.00000000, 0.01887049
+  ), ncol = 4, byrow = TRUE)
+
+  # sample 100 points
+  vals <- rbind(vals, matrix(
+    c(sample(6:60,85,replace = TRUE),
+      sample(5:200,85,replace = TRUE),
+      runif(85,0,1),
+      runif(85,0.001,0.4)),
+    ncol = 4
+  ))
+
   cl <- parallel::makeCluster(parallel::detectCores()-2)
   parallel::clusterEvalQ(cl,library(glmmrBase))
   parallel::clusterEvalQ(cl,library(lme4))
@@ -98,15 +110,12 @@ if(file.exists(paste0(getwd(),"/results/sim_example.RDS"))){
     results[[i]] <- run_simulation_for_point(i)
   }
 
+  saveRDS(vals, paste0(getwd(),"/results/vals.RDS"))
   saveRDS(results, paste0(getwd(),"/results/sim_example.RDS")) # change the path as required
   parallel::stopCluster(cl)
 } else {
   results <- readRDS(paste0(getwd(),"/results/sim_example.RDS"))
 }
-
-
-
-
 
 # Compute true values for the provided points
 true_values <- sapply(results, function(res) mean(res["p1", ]))
@@ -116,7 +125,6 @@ mod_additive <- adapt$new(data_fn = "data_sim", fit_fn = "fit_model", par_lower 
 mod_addint <- adapt$new(data_fn = "data_sim", fit_fn = "fit_model", par_lower = c(6,5,0,0.001), par_upper = c(60,200,1,0.4), par_discrete = c(TRUE,FALSE,FALSE,FALSE), n = 1000)
 mod_linear <- adapt$new(data_fn = "data_sim", fit_fn = "fit_model", par_lower = c(6,5,0,0.001), par_upper = c(60,200,1,0.4), par_discrete = c(TRUE,FALSE,FALSE,FALSE), n = 10000)
 mod_as <- adapt$new(data_fn = "data_sim", fit_fn = "fit_model", par_lower = c(6,5,0,0.001), par_upper = c(60,200,1,0.4), par_discrete = c(TRUE,FALSE,FALSE,FALSE), n = 10000)
-
 
 cl <- parallel::makeCluster(4) # you can change the number of cores
 parallel::clusterEvalQ(cl,library(glmmrBase))
@@ -136,10 +144,7 @@ par_list <- list() ## SAM: we also need to save the parameter values
 blocks <- seq(block_size, total_iterations, by = block_size) ## SAM: I've also moved this outside the loop to help with indexing the data
 gen_new_points <- TRUE ## SAM: Flag for if we need new points
 
-data_list <- readRDS("D:/data_list_2.RDS")
-par_list <- readRDS("D:/par_list_2.RDS")
-
-for (mod_type_name in c("mod_as")) {  # Only include the models you want to run
+for (mod_type_name in c("mod_additive","mod_addint","mod_linear","mod_as")) {  # Only include the models you want to run
   mod_type <- get(mod_type_name)
 
   for (block in blocks) {
@@ -164,7 +169,8 @@ for (mod_type_name in c("mod_as")) {  # Only include the models you want to run
     # Setting adaptation model parameters
     model_type <- switch(mod_type_name,
                          mod_additive = "additive",
-                         mod_linear = "linear",
+                         mod_addint = "addint",
+                         mod_linear = "as",
                          mod_as = "as")
 
     mod_type$adapt(stat="p1", # model for the type 1 error
@@ -172,7 +178,7 @@ for (mod_type_name in c("mod_as")) {  # Only include the models you want to run
                    type = model_type, # Use appropriate model type
                    sampling = 150,
                    L=1.1,
-                   d = 2,
+                   d = ifelse(mod_type_name == "mod_linear",1,2),
                    m = 10)
 
     pred_points <- vals
@@ -227,9 +233,14 @@ for (mod_type_name in c("mod_as")) {  # Only include the models you want to run
 
     saveRDS(results_list, paste0(getwd(),"/results/results_list.RDS"))
     saveRDS(data_list, paste0(getwd(),"/results/data_list.RDS"))
-    saveRDS(par_list, paste0(getwd(),"/results/par_list_3.RDS"))
+    saveRDS(par_list, paste0(getwd(),"/results/par_list.RDS"))
   }
 }
+
+
+#########################
+# SUMMARIZE THE OUTPUT  #
+#########################
 
 require(ggplot2)
 require(gridExtra)
