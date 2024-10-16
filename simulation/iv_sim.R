@@ -64,7 +64,7 @@ if(file.exists(paste0(getwd(),"/results/iv_sim_example.RDS"))){
       runif(100,0,0.8),
       sample(1:20,100,replace = TRUE),
       runif(100,0,1),
-      runif(100,0,0.5),
+      runif(100,0,1),
       sample(10:1000,100,replace = TRUE)),
     ncol = 6
   )
