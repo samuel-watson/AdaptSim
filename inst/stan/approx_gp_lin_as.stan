@@ -4,20 +4,21 @@ functions {
     S = sigma^2 * sqrt(2*pi())^D * prod(phi) * exp(-0.5*((phi .* phi) * w));
     return sqrt(S');
   }
- vector phi_nD(array[] real L, array[] int m, matrix x) {
+ matrix phi_nD(data array[] real L, data array[,] int m, matrix x, data int M_nD) {
     int c = cols(x);
     int r = rows(x);
-
-    matrix[r,c] fi;
-    vector[r] fi1;
-    for (i in 1:c){
-      fi[,i] = 1/sqrt(L[i])*sin(m[i]*pi()*(x[,i]+L[i])/(2*L[i]));
+    vector[r] xcol;
+    matrix[r,M_nD] phi = rep_matrix(1.0,r,M_nD);
+    real sqrtl;
+    for(i in 1:c){
+      xcol = (x[,i]+L[i])*pi()/(2*L[i]);
+      sqrtl = 1/sqrt(L[i]);
+      phi *= pow(sqrtl,M_nD);
+      for(j in 1:M_nD){
+        phi[,j] = phi[,j] .* sin(m[j,i]*xcol);
+      }
     }
-    fi1 = fi[,1];
-    for (i in 2:c){
-      fi1 = fi1 .* fi[,i];
-    }
-    return fi1;
+    return phi;
   }
   real partial_sum_lpdf(array[] real y,int start, int end, vector mu,real sigma){
     return normal_lpdf(y[start:end]|mu[start:end], sigma);
@@ -58,10 +59,11 @@ transformed parameters{
   vector[M_nD] diagSPD;
   matrix[D,d] A = qr_thin_Q(Amat);
   matrix[Nsample,M_nD] PHI;
+  matrix[Nsample,d] XA;
 
-  for (m in 1:M_nD){
-    PHI[,m] = phi_nD(L, indices[m,], x_grid * A);
-  }
+  A = qr_thin_Q(Amat);
+  XA = x_grid * A;
+  PHI = phi_nD(L, indices, XA, M_nD);
   diagSPD = spd_nD(sigma_e, phi, lambda, 1);
   f = intercept + PHI * (diagSPD .* beta);
 

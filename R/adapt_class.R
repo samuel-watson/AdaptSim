@@ -275,12 +275,35 @@ adapt <- R6::R6Class("adapt",
                          } else if(model == "linear"){
                            message("Using linear model")
                            dat$sigma_prior <- private$prior_varpar
-                           fit <- private$mod_lin$sample(data = dat,
-                                                         chains = chains,
-                                                         parallel_chains = parallel_chains,
-                                                         iter_warmup = warmup,
-                                                         iter_sampling = sampling,
-                                                         refresh = 100)
+                           if(type == "linear"){
+                             fit <- private$mod_lin_embed$sample(data = dat,
+                                                                 chains = chains,
+                                                                 parallel_chains = parallel_chains,
+                                                                 iter_warmup = warmup,
+                                                                 iter_sampling = sampling,
+                                                                 refresh = 100)
+                           } else if (type %in% c("additive","addint")) {
+                             fit <- private$mod_lin_additive$sample(data = dat,
+                                                                    chains = chains,
+                                                                    parallel_chains = parallel_chains,
+                                                                    iter_warmup = warmup,
+                                                                    iter_sampling = sampling,
+                                                                    refresh = 100)
+                           } else if (type == "as") {
+                             fit <- private$mod_lin_as$sample(data = dat,
+                                                              chains = chains,
+                                                              parallel_chains = parallel_chains,
+                                                              iter_warmup = warmup,
+                                                              iter_sampling = sampling,
+                                                              refresh = 100)
+                           } else {
+                             fit <- private$mod_lin$sample(data = dat,
+                                                           chains = chains,
+                                                           parallel_chains = parallel_chains,
+                                                           iter_warmup = warmup,
+                                                           iter_sampling = sampling,
+                                                           refresh = 100)
+                           }
                          } else {
                            stop("Model incorrectly specified")
                          }
