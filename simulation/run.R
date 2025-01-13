@@ -64,7 +64,7 @@ fit_model(df)
 
 standard_sim <- function(x)fit_model(data_sim(x))
 
-if(file.exists(paste0(getwd(),"/results/sim_example.RDS"))){
+if(!file.exists(paste0(getwd(),"/results/sim_example.RDS"))){
   # deliberately chosen values with maximal spread
   vals <- matrix(c(
     34, 199, 0.23637690, 0.09193269,
@@ -101,7 +101,7 @@ if(file.exists(paste0(getwd(),"/results/sim_example.RDS"))){
   # Function to run simulations for a given point
   run_simulation_for_point <- function(index) {
     point <- vals[index, ]
-    pbapply::pbreplicate(1000, standard_sim(point), cl = cl)
+    pbapply::pbreplicate(10000, standard_sim(point), cl = cl)
   }
 
   # Run simulations for the provided points
@@ -115,6 +115,7 @@ if(file.exists(paste0(getwd(),"/results/sim_example.RDS"))){
   parallel::stopCluster(cl)
 } else {
   results <- readRDS(paste0(getwd(),"/results/sim_example.RDS"))
+  vals <- readRDS(paste0(getwd(),"/results/vals.RDS"))
 }
 
 # Compute true values for the provided points
@@ -130,27 +131,35 @@ cl <- parallel::makeCluster(4) # you can change the number of cores
 parallel::clusterEvalQ(cl,library(glmmrBase))
 parallel::clusterEvalQ(cl,library(lme4))
 parallel::clusterExport(cl,c("data_sim","fit_model"))
+parallel::clusterSetRNGStream(cl, iseed = 654897)
 
 #########################################
 # code block
 #########################################
 
-block_size <- 10000
-total_iterations <- 100000
+block_size <- 20000
+total_iterations <- 200000
 
 results_list <- list()  # Only include the models you want to run
 data_list <- list() ## SAM: we can save the simulated data in a list to recall it for each model
 par_list <- list() ## SAM: we also need to save the parameter values
 blocks <- seq(block_size, total_iterations, by = block_size) ## SAM: I've also moved this outside the loop to help with indexing the data
 gen_new_points <- TRUE ## SAM: Flag for if we need new points
+adaptive_sampling <- TRUE
 
-for (mod_type_name in c("mod_additive","mod_addint","mod_linear","mod_as")) {  # Only include the models you want to run
+for (mod_type_name in c("mod_linear","mod_as")) {  # Only include the models you want to run
   mod_type <- get(mod_type_name)
+
+  if(adaptive_sampling){
+    results_list <- list()  # Only include the models you want to run
+    data_list <- list() ## SAM: we can save the simulated data in a list to recall it for each model
+    par_list <- list() ## SAM: we also need to save the parameter values
+  }
 
   for (block in blocks) {
     cat("Running block of", block, "iterations for", mod_type_name, "\n")
 
-    if(length(data_list) < which(blocks == block)){
+    if(length(data_list) < which(blocks == block) | adaptive_sampling){
       tryCatch({
         mod_type$sim(cl = cl)
       }, error = function(e) {
@@ -223,17 +232,27 @@ for (mod_type_name in c("mod_additive","mod_addint","mod_linear","mod_as")) {  #
                                                                     rmse = rmse,
                                                                     pred_t1e = pred_t1e)
     if(gen_new_points){
-      tryCatch({
-        mod_type$sample(block_size, type = "none")
-      }, error = function(e) {
-        message("Error during model sampling: ", e)
-        next
-      })
+      if(adaptive_sampling){
+        tryCatch({
+          mod_type$sample(block_size, type = "entr", alpha = 0.05)
+        }, error = function(e) {
+          message("Error during model sampling: ", e)
+          next
+        })
+      } else {
+        tryCatch({
+          mod_type$sample(block_size, type = "none")
+        }, error = function(e) {
+          message("Error during model sampling: ", e)
+          next
+        })
+      }
+
     }
 
-    saveRDS(results_list, paste0(getwd(),"/results/results_list.RDS"))
-    saveRDS(data_list, paste0(getwd(),"/results/data_list.RDS"))
-    saveRDS(par_list, paste0(getwd(),"/results/par_list.RDS"))
+    saveRDS(results_list, paste0(getwd(),"/results/results_list",ifelse(adaptive_sampling,paste0("_",mod_type_name),""),".RDS"))
+    saveRDS(data_list, paste0(getwd(),"/results/data_list",ifelse(adaptive_sampling,paste0("_",mod_type_name),""),".RDS"))
+    saveRDS(par_list, paste0(getwd(),"/results/par_list",ifelse(adaptive_sampling,paste0("_",mod_type_name),""),".RDS"))
   }
 }
 
@@ -249,7 +268,7 @@ require(gridExtra)
 plot_list <- list()
 
 # Only include the models you want to run
-for (mod_type_name in c("mod_additive","mod_linear")) {
+for (mod_type_name in c("mod_linear")) {
   dfp_all_cl <- data.frame()
   dfp_all_cv <- data.frame()
   dfp_all_icc <- data.frame()
@@ -321,7 +340,7 @@ for (plot_name in names(plot_list)) {
 # RMSE Plot
 rmse_df <- data.frame()
 
-for (mod_type_name in c("mod_additive", "mod_linear")) {
+for (mod_type_name in c("mod_additive")) {
   for (block in blocks) {
     rmse_data <- results_list[[mod_type_name]][[which(blocks == block)]]$rmse
     rmse_df <- rbind(rmse_df, data.frame(iterations = block, rmse = rmse_data, model = mod_type_name))

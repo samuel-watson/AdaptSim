@@ -345,6 +345,7 @@ adapt <- R6::R6Class("adapt",
                          }
                        },
                        sample = function(n, type = "var", append = FALSE, alpha = 0.05){
+                         if(!type %in% c("none","var","entr"))stop("Type should be none, var, entr")
                          if(is.null(private$intercept))stop("No MCMC samples")
                          x <- private$sample_values()
                          x <- matrix(x,nrow=1)
@@ -356,12 +357,13 @@ adapt <- R6::R6Class("adapt",
                          } else {
                            mean_e2 <- 1
                            while(nrow(x) < n){
-                             n_x <- (n - nrow(x))/mean_e2
+                             n_x <- ceiling((n - nrow(x))/mean_e2)
+                             if(n_x <= 0)break;
                              x2 <- matrix(NA,nrow=n_x, ncol= length(self$par_upper))
                              for(i in 1:n_x)x2[i,] <- private$sample_values()
                              p2 <- self$predict(x2, TRUE)
-                             e2 <- apply(p2,1,sd)#var(p2[1,])
-                             if(private$model == "binomial"){
+                             e2 <- apply(p2,1,sd)
+                             if(type == "entr"){
                                prob1 <- 2*(1-pnorm(abs((rowMeans(p2)) - alpha)/e2))
                                e2 <- sapply(prob1, function(i)ifelse(i == 1, 0, ifelse(i==0, 1, -i*log(i,2) - (1-i)*log((1-i),2))))
                              } else {
@@ -372,6 +374,10 @@ adapt <- R6::R6Class("adapt",
                              n_e2 <- sum(e2 > u1)
                              if(n_e2 > 0){
                                x2 <- x2[e2 > u1,]
+                               if(length(nrow(x2) + nrow(x) > n) == 0){
+                                 cat("\nLength condition: nrow(x2) = ",nrow(x2)," nrow(x)  = ", nrow(x)," n = ",n )
+                                 break;
+                               }
                                if(nrow(x2) + nrow(x) > n){
                                  x <- rbind(x,x2[1:(n - nrow(x)),,drop=FALSE])
                                } else {

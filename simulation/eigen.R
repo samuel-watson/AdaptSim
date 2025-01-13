@@ -6,43 +6,97 @@ if(!require(AdaptSim)){
 }
 
 
-cond_number <- function(t,k,m,icc,cac,type){
-  df <- data_trial(t,k,m,type)
+cond_number <- function(t,k,m,icc,cac,iac,cv,type,mod,cohort){
+  df <- data_trial(t,k,m,cv,type)
   nT <- length(unique(df$t))
-  model <- Model$new(
-    formula = ~ int + factor(t) - 1 + (1|gr(cl)) + (1|gr(cl,t)),
-    covariance = c(icc*cac,icc*(1-cac)),
-    mean = rep(0,nT+1),
-    data = df,
-    family = gaussian(),
-    var_par = 1-icc
-  )
+  if(t == 1){
+    model <- Model$new(
+      formula = ~ int + (1|gr(cl)),
+      covariance = c(icc),
+      mean = rep(0,nT+1),
+      data = df,
+      family = gaussian(),
+      var_par = 1-icc
+    )
+  } else {
+    f1 <- "~ int + factor(t)"
+    cpars <- c()
+
+    if(mod == "exc"){
+      f1 <- paste0(f1," + (1|gr(cl)) + (1|gr(cl,t))")
+      cpars <- c(cpars,icc*cac,icc*(1-cac))
+    } else {
+      f1 <- paste0(f1," + (1|gr(cl)*ar1(t))")
+      cpars <- c(cpars,icc,cac)
+    }
+    if(cohort){
+      f1 <- paste0(f1," + (1|gr(indid))")
+      cpars <- c(cpars,iac)
+      vpar <- (1-icc)*(1-iac)
+    } else {
+      vpar <- (1-icc)
+    }
+    model <- Model$new(
+      formula = as.formula(f1),
+      covariance = cpars,
+      mean = rep(0,nT+1),
+      data = df,
+      family = gaussian(),
+      var_par = vpar
+    )
+  }
+
   df$y <- model$sim_data()
   M <- model$information_matrix()
-  K <<- model$small_sample_correction("KR")
   e <- eigen(M)$values
-  CAB <- M[1,2:nT,drop=FALSE] %*% solve(M[2:nT, 2:nT]) %*% t(M[1,2:nT,drop=FALSE])
-  asd <- drop(solve(M)[1,1])
-  
-  return(list(df, max(e)/min(e), max(e), min(e), prod(e), 
-              sum(e), length(e), drop(CAB), drop(M[1,1]), asd))
+  if(t == 1){
+    CAB <- M[2,1,drop=FALSE] %*% solve(M[1, 1]) %*% t(M[2,1,drop=FALSE])
+  } else {
+    CAB <- M[2,c(1,3:nT),drop=FALSE] %*% solve(M[c(1,3:nT), c(1,3:nT)]) %*% t(M[2,c(1,3:nT),drop=FALSE])
+  }
+  asd <- drop(solve(M)[2,2])
+
+  return(list(df, max(e)/min(e), max(e), min(e), prod(e),
+              sum(e), length(e), drop(CAB), drop(M[2,2]), asd,
+              mod, cohort))
 }
 
 fit_model <- function(data=data){
-  fit1 <- lme4::lmer(y~int+factor(t) + (1|cl/t),data=data[[1]], REML= FALSE)#tryCatch(suppressWarnings(lme4::lmer(y~int+(1|cl),data=data)),error=function(i)NA)
-  
-  if(is(fit1,"lmerMod")){
+  if(length(unique(data[[1]]$t)) == 1){
+    #fit1 <- lme4::lmer(y~int+ (1|cl),data=data[[1]], REML= FALSE)
+    fit1 <- glmmTMB::glmmTMB(y ~ int + toep(1 | cl), data = data[[1]])
+  } else {
+    f1 <- "y~int+factor(t)"
+    if(data[[11]] == "exc"){
+      f1 <- paste0(f1," + toep(1 | cl/t)")
+    } else {
+      data[[1]]$ft <- factor(data[[1]]$t)
+      f1 <- paste0(f1," + ar1(ft + 0 | cl)")
+    }
+    if(data[[12]]){
+      f1 <- paste0(f1," + toep(1 | indid)")
+    }
+    #fit1 <- lme4::lmer(y~int+factor(t) + (1|cl/t),data=data[[1]], REML= FALSE)
+    fit1 <- glmmTMB::glmmTMB(as.formula(f1), data = data[[1]])
+  }
+  print(class(fit1))
+  print(summary(fit1))
+
+  if(is(fit1,"glmmTMB")){
     s1 <- summary(fit1)
-    tstat <- s1$coefficients[2,3]
+    tstat <- s1$coefficients$cond[2,3]
     pval <- 2*(1-pnorm(abs(tstat)))
-    
-    return(c(conv = fit1@optinfo$conv$opt,
-             beta = s1$coefficients[2,1],
-             se = s1$coefficients[2,2],
+    pval_bw <- 2*(1-pt(abs(tstat),df = length(unique(paste0(data[[1]]$cl,".",data[[1]]$t))) - length(unique(data[[1]]$t)) - 1))
+
+    return(c(conv = TRUE,
+             beta = s1$coefficients$cond[2,1],
+             se = s1$coefficients$cond[2,2],
              p = pval,
+             pbw = pval_bw,
              p1 = I(pval < 0.05)*1,
-             cover = I((s1$coefficients[2,1] + qnorm(0.975)*s1$coefficients[2,2]) > 0 &&
-                         (s1$coefficients[2,1] - qnorm(0.975)*s1$coefficients[2,2]) < 0)*1,
+             p1bw = I(pval_bw < 0.05)*1,
+             cover = I((s1$coefficients$cond[2,1] + qnorm(0.975)*s1$coefficients$cond[2,2]) > 0 &&
+                         (s1$coefficients$cond[2,1] - qnorm(0.975)*s1$coefficients$cond[2,2]) < 0)*1,
              e1 = log(data[[2]]),
              e2 = log(data[[3]]),
              e3 = log(data[[4]]),
@@ -58,7 +112,9 @@ fit_model <- function(data=data){
              beta = NA,
              se = NA,
              p = NA,
+             pbw = NA,
              p1 = NA,
+             p1bw = NA,
              cover = NA,
              e1 = log(data[[2]]),
              e2 = log(data[[3]]),
@@ -71,21 +127,30 @@ fit_model <- function(data=data){
              a = data[[10]]))
   }
 }
+tmp <- fit_model(cond_number(10,1,20,0.001,0.1,0.8,0.1,"sw","exc",TRUE))
 
-tmp <- fit_model(cond_number(10,2,20,0.001,0.1,"sw"))
+fit_model(cond_number(1,20,20,0.05,0.1,"sw"))
 
 # generate comparisons
-block_size <- 20 
+block_size <- 100
 
-vals_e <- data.frame(
+vals_e2 <- data.frame(
   t = sample(4:10,block_size,replace=T),
   k =  sample(1:2,block_size,replace = T),
   m=  sample(10:100,block_size,replace = T),
   icc =  runif(block_size,0.001,0.2),
   cac =  runif(block_size,0.01,0.99),
-  type = sample(c("sw","inc","st","par","par_co"),block_size,replace=T)
+  iac = runif(block_size,0.01,0.99),
+  cv = sample(c(rep(0,block_size),abs(rnorm(block_size,0,0.2))),10),
+  type = sample(c("sw","inc","st","par","par_co"),block_size,replace=T),
+  cohort = sample(c(TRUE,FALSE),block_size,replace = TRUE),
+  mod = sample(c("exc","ar"),block_size,replace = TRUE)
 )
-vals_e[vals_e$type%in%c("par","par_co"),"k"] <- sample(4:40,sum(vals_e$type%in%c("par","par_co")),replace=T)
+vals_e[vals_e$type%in%c("par"),"k"] <- sample(4:40,sum(vals_e$type%in%c("par")),replace=T)
+vals_e[vals_e$type%in%c("par"),"t"] <- sample(1:4,sum(vals_e$type%in%c("par")),prob = c(0.5,0.5/3,0.5/3,0.5/3),replace=T)
+
+vals_e[vals_e$type%in%c("par_co"),"k"] <- sample(4:30,sum(vals_e$type%in%c("par_co")),replace=T)
+vals_e[vals_e$type%in%c("par_co"),"t"] <- sample(2:4,sum(vals_e$type%in%c("par_co")),prob = c(0.67,0.33/2,0.33/2),replace=T)
 
 cl <- parallel::makeCluster(4)
 parallel::clusterEvalQ(cl,library(glmmrBase))
@@ -96,21 +161,24 @@ parallel::clusterExport(cl,c("cond_number","fit_model","data_trial","vals_e"))
 
 # Run simulations for the provided points
 results_e <- list()
-for (i in 18:nrow(vals_e)) {
+for (i in 4:nrow(vals_e)) {
   parallel::clusterExport(cl,c("i"))
-  results_e[[i]] <- pbapply::pbreplicate(1000, fit_model(cond_number(vals_e$t[i],vals_e$k[i],
+  results_e[[i]] <- pbapply::pbreplicate(10000, fit_model(cond_number(vals_e$t[i],vals_e$k[i],
                                                                    vals_e$m[i],vals_e$icc[i],
-                                                                   vals_e$cac[i],vals_e$type[i])), cl = cl)
+                                                                   vals_e$cac[i],vals_e$iac[i],
+                                                                   vals_e$cv[i],vals_e$type[i],
+                                                                   vals_e$mod[i],vals_e$cohort[i])), cl = cl)
+  saveRDS(results_e, paste0(getwd(),"/results/sim_example_eigen_bw.RDS"))
 }
 
 
 
 
-saveRDS(vals_e,    paste0(getwd(),"/results/vals_eigen.RDS"))
-saveRDS(results_e, paste0(getwd(),"/results/sim_example_eigen.RDS"))
+saveRDS(vals_e,    paste0(getwd(),"/results/vals_eigen_bw.RDS"))
 
-vals_e <- readRDS(paste0(getwd(),"/results/vals_eigen.RDS"))
-results_e <- readRDS(paste0(getwd(),"/results/sim_example_eigen.RDS"))
+
+vals_e <- readRDS(paste0(getwd(),"/results/vals_eigen_bw.RDS"))
+results_e <- readRDS(paste0(getwd(),"/results/sim_example_eigen_bw.RDS"))
 
 true_values <- sapply(results_e, function(res) mean(res["p1", ]))
 t1e_values <- sapply(true_values, function(x) x - qnorm(0.975)*sqrt(x*(1-x)/1000) < 0.05 & x + qnorm(0.975)*sqrt(x*(1-x)/1000) > 0.05)
@@ -120,11 +188,11 @@ for(i in 2:length(results_e)){
   results_edf1 <- rbind(results_edf1, data.frame(t(results_e[[i]][7:14,1])))
 }
 
-mod_additive <- adapt$new(data_fn = "data_trial", 
-                          fit_fn = "fit_model", 
-                          par_lower = c(1,2), 
-                          par_upper = c(6,9), 
-                          par_discrete = c(FALSE,FALSE), 
+mod_additive <- adapt$new(data_fn = "data_trial",
+                          fit_fn = "fit_model",
+                          par_lower = c(1,2),
+                          par_upper = c(7,10),
+                          par_discrete = c(FALSE,FALSE),
                           n = 20000)
 
 cl <- parallel::makeCluster(4) # you can change the number of cores
@@ -144,9 +212,14 @@ vals <- data.frame(
   m=  sample(10:30,block_size,replace = T),
   icc =  runif(block_size,0.001,0.2),
   cac =  runif(block_size,0.01,0.99),
-  type = sample(c("sw","inc","st","par","par_co"),block_size,replace=T)
+  iac = runif(block_size,0.01,0.99),
+  cv = sample(c(rep(0,block_size),abs(rnorm(block_size,0,0.2))),10),
+  type = sample(c("sw","inc","st","par","par_co"),block_size,replace=T),
+  cohort = sample(c(TRUE,FALSE),block_size,replace = TRUE),
+  mod = sample(c("exc","ar"),block_size,replace = TRUE)
 )
-vals[vals$type%in%c("par","par_co"),"k"] <- sample(4:30,sum(vals$type%in%c("par","par_co")),replace=T)
+vals[vals$type%in%c("par","par_co"),"k"] <- sample(4:40,sum(vals$type%in%c("par","par_co")),replace=T)
+vals[vals$type%in%c("par","par_co"),"t"] <- sample(1:4,sum(vals$type%in%c("par","par_co")),prob = c(0.5,0.5/3,0.5/3,0.5/3),replace=T)
 
 parallel::clusterExport(cl,c("vals"))
 
@@ -157,15 +230,16 @@ res <- pbapply::pbsapply(1:nrow(vals),
                   cl = cl)
 
 res2 <- res
+
 res3 <- res
 res4 <- res
 
-saveRDS(list(res2,res3,res4), paste0(getwd(),"/results/sim_outputs.RDS"))
+saveRDS(list(res2,res3,res4), paste0(getwd(),"/results/sim_outputs_bw.RDS"))
 
-pars4 <- t(res3[c(7:14),])
+pars4 <- t(res[c(7:14),])
 pars4[,8] <- log(pars4[,8])
 
-mod_additive$last_sim_output <- res3[1:6,]
+mod_additive$last_sim_output <- res[1:6,]
 mod_additive$par_vals <- pars4[,c(1,8)]
 
 parallel::stopCluster(cl)
@@ -175,17 +249,17 @@ mod_additive$adapt(stat="p1", # model for the type 1 error
                model="binomial",
                type = "full", # Use appropriate model type
                sampling = 150,
-               L=1.1,
+               L=1.2,
                d = 1,
                m = 10)
 
 results_edf1$m1 <- log(results_edf1$m1)
 pred_e <- mod_additive$predict(results_edf1[,c(1,8)])
-dfpr <- cbind(data.frame(pred = rowMeans(pred_e), true = true_values, 
+dfpr <- cbind(data.frame(pred = rowMeans(pred_e), true = true_values,
                          lci = apply(pred_e,1,function(i)quantile(i,0.025)),
                          uci = apply(pred_e,1,function(i)quantile(i,0.975)),
                          prob = apply(pred_e,1,function(i)length(i[i>0.05])/length(i))),
-              vals_e[1:17,], results_edf1)
+              vals_e, results_edf1)
 
 rowMeans(pred_e)
 
@@ -211,6 +285,13 @@ ggplot(data = dfpr, aes(x = log(true), y = log(pred), color = type_label))+
   theme(panel.grid = element_blank())+
   scale_color_discrete(name = "Trial type")
 
+ggplot(data = dfpr, aes(x = true, y = pred, color = type_label))+
+  geom_abline(intercept = 0, slope = 1, lty = 2)+
+  geom_point()+
+  theme_bw()+
+  theme(panel.grid = element_blank())+
+  scale_color_discrete(name = "Trial type")
+
 ggplot(data = dfpr, aes(x = true, y = 2*(1-prob), color = type_label))+
   geom_vline(xintercept = 0.05+3*sqrt(0.05*0.95/10000),lty =3)+
   geom_vline(xintercept = 0.05-3*sqrt(0.05*0.95/10000),lty =3)+
@@ -221,10 +302,10 @@ ggplot(data = dfpr, aes(x = true, y = 2*(1-prob), color = type_label))+
   scale_color_discrete(name = "Trial type")+
   scale_x_log10()
 
-dfv <- cbind(vals_e[1:17,], results_edf1, true_values)
+dfv <- cbind(vals_e, results_edf1, true_values)
 dfv$isin <- I(true_values < 0.07)
 
-ggplot(data = dfv, aes( y = e1, x = m1, 
+ggplot(data = dfv, aes( y = e1, x = m1,
                         color = true_values,
                         shape = factor(isin)))+
   geom_point()+
@@ -240,7 +321,7 @@ qplot(x = true_values, y = rowMeans(pred_e))+
 
 epoints1 <- expand.grid(l = seq(1,6,length.out = 20), s = 4)
 epoints2 <- expand.grid(l = 4, s = seq(3,9,length.out = 20))
-epoints3 <- expand.grid(l = seq(1,6,length.out = 20), s = seq(3,9,length.out = 20))
+epoints3 <- expand.grid(l = seq(1,7,length.out = 20), s = seq(3,10,length.out = 20))
 
 plot_points_data1 <- mod_additive$predict(epoints1)
 plot_points_data2 <- mod_additive$predict(epoints2)
@@ -299,10 +380,10 @@ gen_new_points <- TRUE ## SAM: Flag for if we need new points
 
 for (mod_type_name in c("mod_additive","mod_addint","mod_linear","mod_as")) {  # Only include the models you want to run
   mod_type <- get(mod_type_name)
-  
+
   for (block in blocks) {
     cat("Running block of", block, "iterations for", mod_type_name, "\n")
-    
+
     if(length(data_list) < which(blocks == block)){
       tryCatch({
         mod_type$sim(cl = cl)
@@ -318,14 +399,14 @@ for (mod_type_name in c("mod_additive","mod_addint","mod_linear","mod_as")) {  #
       mod_type$par_vals <- par_list[[which(blocks == block)]]
       gen_new_points <- FALSE
     }
-    
+
     # Setting adaptation model parameters
     model_type <- switch(mod_type_name,
                          mod_additive = "additive",
                          mod_addint = "addint",
                          mod_linear = "as",
                          mod_as = "as")
-    
+
     mod_type$adapt(stat="p1", # model for the type 1 error
                    model="binomial",
                    type = model_type, # Use appropriate model type
@@ -333,42 +414,42 @@ for (mod_type_name in c("mod_additive","mod_addint","mod_linear","mod_as")) {  #
                    L=1.1,
                    d = ifelse(mod_type_name == "mod_linear",1,2),
                    m = 10)
-    
+
     pred_points <- vals
     pred_points_data <- mod_type$predict(pred_points)
-    
+
     rmse <- c()
     for(i in 1:nrow(pred_points_data)) rmse <- c(rmse, sqrt(mean((pred_points_data[i, ] - true_values[i])^2)))
-    
+
     pred_t1e <- c()
     for(i in 1:nrow(pred_points_data)){
       pred_t1e <- c(pred_t1e, quantile(pred_points_data[i, ],0.025) < 0.05 & quantile(pred_points_data[i, ],0.975) > 0.05)
     }
     #sum(pred_t1e*t1e_values)/length(t1e_values)
-    
+
     cl_plot_points <- as.matrix(expand.grid(cl = 6:60, m = 10, cv = 0.2, icc = 0.05))
     cv_plot_points <- as.matrix(expand.grid(cl = 30, m = 10, cv = seq(0, 1, length.out = 100), icc = 0.05))
     icc_plot_points <- as.matrix(expand.grid(cl = 30, m = 10, cv = 0.2, icc = seq(0.001, 0.4, length.out = 100)))
-    
+
     cl_plot_points_data <- mod_type$predict(cl_plot_points)
     cv_plot_points_data <- mod_type$predict(cv_plot_points)
     icc_plot_points_data <- mod_type$predict(icc_plot_points)
-    
+
     dfp_cl <- data.frame(cl = 6:60,
                          mean = apply(cl_plot_points_data,1,mean),
                          lci = apply(cl_plot_points_data,1,function(i)quantile(i,0.025)),
                          uci = apply(cl_plot_points_data,1, function(i)quantile(i,0.975)))
-    
+
     dfp_cv <- data.frame(cv = seq(0, 1, length.out = 100),
                          mean = apply(cv_plot_points_data,1,mean),
                          lci = apply(cv_plot_points_data,1,function(i)quantile(i,0.025)),
                          uci = apply(cv_plot_points_data,1, function(i)quantile(i,0.975)))
-    
+
     dfp_icc <- data.frame(icc = seq(0.001, 0.4, length.out = 100),
                           mean = apply(icc_plot_points_data,1,mean),
                           lci = apply(icc_plot_points_data,1,function(i)quantile(i,0.025)),
                           uci = apply(icc_plot_points_data,1, function(i)quantile(i,0.975)))
-    
+
     results_list[[mod_type_name]][[which(blocks == block)]] <- list(pred_points_data = pred_points_data,
                                                                     dfp_cl = dfp_cl,
                                                                     dfp_cv = dfp_cv,
@@ -383,7 +464,7 @@ for (mod_type_name in c("mod_additive","mod_addint","mod_linear","mod_as")) {  #
         next
       })
     }
-    
+
     saveRDS(results_list, paste0(getwd(),"/results/results_list.RDS"))
     saveRDS(data_list, paste0(getwd(),"/results/data_list.RDS"))
     saveRDS(par_list, paste0(getwd(),"/results/par_list.RDS"))
@@ -406,24 +487,24 @@ for (mod_type_name in c("mod_additive","mod_linear")) {
   dfp_all_cl <- data.frame()
   dfp_all_cv <- data.frame()
   dfp_all_icc <- data.frame()
-  
+
   for (block in blocks) {
     dfp_cl <- results_list[[mod_type_name]][[which(blocks == block)]]$dfp_cl
     dfp_cl$iterations <- block
     dfp_cl$model <- mod_type_name
     dfp_all_cl <- rbind(dfp_all_cl, dfp_cl)
-    
+
     dfp_cv <- results_list[[mod_type_name]][[which(blocks == block)]]$dfp_cv
     dfp_cv$iterations <- block
     dfp_cv$model <- mod_type_name
     dfp_all_cv <- rbind(dfp_all_cv, dfp_cv)
-    
+
     dfp_icc <- results_list[[mod_type_name]][[which(blocks == block)]]$dfp_icc
     dfp_icc$iterations <- block
     dfp_icc$model <- mod_type_name
     dfp_all_icc <- rbind(dfp_all_icc, dfp_icc)
   }
-  
+
   # Create the plot for the current model (Number of clusters)
   p_cl <- ggplot(data = dfp_all_cl, aes(x = cl, y = mean, fill = as.factor(iterations))) +
     geom_hline(yintercept = 0.05, lty = 1) +
@@ -432,7 +513,7 @@ for (mod_type_name in c("mod_additive","mod_linear")) {
     labs(x = "Number of clusters", y = "Type I error", fill = "Iterations") +
     ggtitle(paste("Model Type:", mod_type_name, "- Clusters")) +
     theme_minimal()
-  
+
   # Create the plot for the current model (CV)
   p_cv <- ggplot(data = dfp_all_cv, aes(x = cv, y = mean, fill = as.factor(iterations))) +
     geom_hline(yintercept = 0.05, lty = 1) +
@@ -441,7 +522,7 @@ for (mod_type_name in c("mod_additive","mod_linear")) {
     labs(x = "Coefficient of Variation", y = "Type I error", fill = "Iterations") +
     ggtitle(paste("Model Type:", mod_type_name, "- CV")) +
     theme_minimal()
-  
+
   # Create the plot for the current model (ICC)
   p_icc <- ggplot(data = dfp_all_icc, aes(x = icc, y = mean, fill = as.factor(iterations))) +
     geom_hline(yintercept = 0.05, lty = 1) +
@@ -450,7 +531,7 @@ for (mod_type_name in c("mod_additive","mod_linear")) {
     labs(x = "Intraclass Correlation Coefficient", y = "Type I error", fill = "Iterations") +
     ggtitle(paste("Model Type:", mod_type_name, "- ICC")) +
     theme_minimal()
-  
+
   # Add the plots to the list
   plot_list[[paste(mod_type_name, "clusters")]] <- p_cl
   plot_list[[paste(mod_type_name, "cv")]] <- p_cv

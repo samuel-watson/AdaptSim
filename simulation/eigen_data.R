@@ -1,4 +1,4 @@
-data_trial <- function(t,k,m,type){
+data_trial <- function(t,k,m,cv,type){
   if(type %in% c("st","st_m","inc","sw")){
     df <- nelder(formula(paste0("~cl(",t-1,")*t(",t,")")))
     df$int <- I(df$t > df$cl)*2
@@ -34,21 +34,51 @@ data_trial <- function(t,k,m,type){
       }
     }
   }
-  
-  df <- df[rep(1:nrow(df),each = m),] 
-  
+  if(cv > 0){
+    mcl <- ceiling(rnorm(length(unique(df$cl)),m,cv*m))
+  } else {
+    mcl <- rep(m,length(unique(df$cl)))
+  }
+  df <- df[rep(1:nrow(df),mcl[df$cl]),]
+  # add individual indicators
+  df$indid <- 0
+  for(i in unique(df$cl)){
+    maxid <- max(df$indid)
+    for(j in unique(df[df$cl==i,'t'])){
+      df[df$cl==i&df$t==j,'indid'] <- 1:length(df[df$cl==i&df$t==j,'indid']) + maxid
+    }
+  }
+
   return(df)
 }
 
-df1 <- data_trial(9,1,8,"st")
+df1 <- data_trial(9,1,10,0,"sw")
 df2 <- data_trial(9,1,10,"st_m")
 df3 <- data_trial(9,30,10,"par")
 
 model1 <- Model$new(
+  formula = ~ int + factor(t) + (1|gr(cl)*ar1(t)) + (1|gr(indid)),
+  data = df1,
+  family= gaussian(),
+  var_par = 0.2,
+  covariance = c(0.05,0.8,0.8)
+)
+
+model1 <- Model$new(
   formula = ~ int + factor(t) + (1|gr(cl)) + (1|gr(cl,t)),
   data = df1,
-  family= gaussian()
+  family= gaussian(),
+  var_par = 1,
+  covariance = c(0.04,0.01)
 )
+
+df1$y <- model1$sim_data()
+df1$ft <- factor(df1$t)
+df1$clt <- paste0(df1$cl,".",df1$t)
+summary(glmmTMB::glmmTMB(y ~ int + factor(t) + ar1(ft + 0 | cl) + toep(1 | indid), data = df1))
+summary(glmmTMB::glmmTMB(y ~ int + factor(t) + toep(1 | cl/t), data = df1))
+
+sqrt(diag(solve(model1$information_matrix())))
 
 model2 <- Model$new(
   formula = ~ int + factor(t) + (1|gr(cl)) + (1|gr(cl,t)),
@@ -84,7 +114,7 @@ eigen(solve(M3k$vcov_beta))$values
 
 data_sim <- function(t,k,m,icc,cac,type){
   # df <- data.frame(cl = 1:x[1])
-  # 
+  #
   # if(x[3]==0){
   #   sizes <- rep(x[2],x[1])
   # } else {
@@ -93,12 +123,12 @@ data_sim <- function(t,k,m,icc,cac,type){
   #     sizes[sizes <= 0] <- round(rnorm(length(sizes[sizes <= 0]), x[2], x[3]*x[2]),0)
   #   }
   # }
-  # 
-  # 
+  #
+  #
   # df <- df[rep(1:x[1],sizes),,drop=FALSE]
   # df$int <- 0
   # df[df$cl > x[1]/2,'int'] <- 1
-  # 
+  #
   df <- data_trial(t,k,m,type)
   mod <- Model$new(
     formula = ~ int + factor(t) + (1|gr(cl)) + (1|gr(cl,t)),
@@ -108,7 +138,7 @@ data_sim <- function(t,k,m,icc,cac,type){
     family = gaussian(),
     var_par = 1-icc
   )
-  
+
   df$y <- mod$sim_data()
   return(df)
 }
